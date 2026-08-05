@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -13,13 +14,13 @@ class AuthRepository:
         self._session = session
 
     async def by_email(self, email: str) -> User | None:
-        return await self._session.scalar(select(User).where(User.email == email))
+        return cast(User | None, await self._session.scalar(select(User).where(User.email == email)))
 
     async def by_id(self, user_id: UUID) -> User | None:
         return await self._session.get(User, user_id)
 
     async def by_identity(self, provider: str, subject: str) -> OAuthIdentity | None:
-        return await self._session.scalar(select(OAuthIdentity).where(OAuthIdentity.provider == provider, OAuthIdentity.subject == subject))
+        return cast(OAuthIdentity | None, await self._session.scalar(select(OAuthIdentity).where(OAuthIdentity.provider == provider, OAuthIdentity.subject == subject)))
 
     async def create_user(self, email: str, password_hash: str | None, verified: bool = False) -> User:
         from datetime import UTC, datetime
@@ -30,6 +31,9 @@ class AuthRepository:
 
     async def add_identity(self, user: User, provider: str, subject: str) -> None:
         self._session.add(OAuthIdentity(user_id=user.id, provider=provider, subject=subject))
+
+    async def rollback(self) -> None:
+        await self._session.rollback()
 
     async def commit(self) -> None:
         await self._session.commit()

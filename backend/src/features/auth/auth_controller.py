@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -59,17 +60,17 @@ class AuthController:
         self._set_refresh(response, refresh)
         return TokenResponse(access_token=access)
 
-    async def logout(self, request: Request, response: Response) -> Response:
+    async def logout(self, request: Request, response: Response) -> None:
         value = request.cookies.get(self._settings.auth_refresh_cookie_name)
         if value:
             await self._tokens.revoke_refresh(value)
         self._clear_refresh(response)
-        return response
+        response.status_code = 204
 
-    async def logout_all(self, request: Request, response: Response) -> Response:
+    async def logout_all(self, request: Request, response: Response) -> None:
         await self._tokens.revoke_all(self._current_user(request))
         self._clear_refresh(response)
-        return response
+        response.status_code = 204
 
     async def me(self, request: Request) -> dict[str, object]:
         user = await self._auth._require_user(self._current_user(request))
@@ -97,7 +98,7 @@ class AuthController:
 
 
 def get_controller(request: Request) -> AuthController:
-    return request.state.service_scope.get(AuthController)
+    return cast(AuthController, request.state.service_scope.get(AuthController))
 
 
 @router.post("/signup", status_code=202)
@@ -141,13 +142,13 @@ async def refresh(request: Request, response: Response, controller: AuthControll
 
 
 @router.post("/logout", status_code=204)
-async def logout(request: Request, response: Response, controller: AuthController = Depends(get_controller)) -> Response:
-    return await controller.logout(request, response)
+async def logout(request: Request, response: Response, controller: AuthController = Depends(get_controller)) -> None:
+    await controller.logout(request, response)
 
 
 @router.post("/logout-all", status_code=204)
-async def logout_all(request: Request, response: Response, controller: AuthController = Depends(get_controller)) -> Response:
-    return await controller.logout_all(request, response)
+async def logout_all(request: Request, response: Response, controller: AuthController = Depends(get_controller)) -> None:
+    await controller.logout_all(request, response)
 
 
 @router.get("/me")

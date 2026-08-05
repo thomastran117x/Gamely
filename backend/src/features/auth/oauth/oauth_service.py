@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from threading import RLock
+from typing import ClassVar
 from uuid import UUID
 
 import jwt
@@ -15,6 +17,9 @@ from src.shared.exceptions import BadRequestError, UnauthorizedError
 
 
 class OAuthService:
+    _jwks_clients: ClassVar[dict[str, jwt.PyJWKClient]] = {}
+    _jwks_lock: ClassVar[RLock] = RLock()
+
     def __init__(self, repository: AuthRepository, tokens: TokenService, redis: Redis, settings: Settings) -> None:
         self._repository = repository
         self._tokens = tokens
@@ -30,18 +35,16 @@ class OAuthService:
     async def login(self, provider: str, id_token: str, nonce: str) -> tuple[User, str, str]:
         if not await self._redis.delete(f"auth:oauth-nonce:{provider}:{nonce}"):
             raise UnauthorizedError("The OAuth challenge is invalid or expired.")
-        client_id, issuer, jwks_url = self._provider_config(provider)
+        client_id, issuers, jwks_url = self._provider_config(provider)
         try:
-            key = await asyncio.to_thread(jwt.PyJWKClient(jwks_url).get_signing_key_from_jwt, id_token)
+            key = await asyncio.to_thread(self._jwks_client(jwks_url).get_signing_key_from_jwt, id_token)
             claims = jwt.decode(id_token, key.key, algorithms=["RS256", "ES256"], audience=client_id, options={"verify_iss": False})
         except Exception as exc:
             raise UnauthorizedError("The provider token is invalid.") from exc
-        token_issuer = str(claims.get("iss", ""))
-        valid_issuer = token_issuer.startswith("https://login.microsoftonline.com/") and token_issuer.endswith("/v2.0") if provider == "microsoft" else token_issuer == issuer
-        if not valid_issuer or not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
+        if str(claims.get("iss", "")) not in issuers or not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
             raise UnauthorizedError("The provider token could not be verified.")
-        email = self._email_address(str(claims.get("email", "")))
-        if claims.get("email_verified") not in (True, "true") or not claims.get("sub"):
+        email = self._email_address(self._email_claim(provider, claims))
+        if not claims.get("sub") or (provider != "microsoft" and claims.get("email_verified") not in (True, "true")):
             raise UnauthorizedError("The provider did not supply a verified email address.")
         identity = await self._repository.by_identity(provider, str(claims["sub"]))
         if identity is not None:
@@ -52,18 +55,37 @@ class OAuthService:
             await self._repository.commit()
         return user, self._tokens.issue_access(user.id, user.email, user.email_verified_at is not None), await self._tokens.issue_refresh(user.id)
 
-    def _provider_config(self, provider: str) -> tuple[str, str, str]:
-        configs = {
-            "google": (self._settings.google_client_id, "https://accounts.google.com", "https://www.googleapis.com/oauth2/v3/certs"),
-            "microsoft": (self._settings.microsoft_client_id, "", "https://login.microsoftonline.com/common/discovery/v2.0/keys"),
-            "apple": (self._settings.apple_client_id, "https://appleid.apple.com", "https://appleid.apple.com/auth/keys"),
-        }
-        if provider not in configs:
-            raise BadRequestError("The OAuth provider is unsupported.")
-        config = configs[provider]
-        if not config[0]:
-            raise BadRequestError("The OAuth provider is not configured.")
-        return config
+    def _provider_config(self, provider: str) -> tuple[str, set[str], str]:
+        if provider == "google":
+            return self._configured(provider, self._settings.google_client_id, {"https://accounts.google.com", "accounts.google.com"}, "https://www.googleapis.com/oauth2/v3/certs")
+        if provider == "apple":
+            return self._configured(provider, self._settings.apple_client_id, {"https://appleid.apple.com"}, "https://appleid.apple.com/auth/keys")
+        if provider == "microsoft":
+            tenant = self._settings.microsoft_tenant_id
+            if not tenant:
+                raise BadRequestError("The OAuth provider is not configured.")
+            issuer = f"https://login.microsoftonline.com/{tenant}/v2.0"
+            return self._configured(provider, self._settings.microsoft_client_id, {issuer}, f"https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys")
+        raise BadRequestError("The OAuth provider is unsupported.")
+
+    @staticmethod
+    def _configured(provider: str, client_id: str, issuers: set[str], jwks_url: str) -> tuple[str, set[str], str]:
+        if not client_id:
+            raise BadRequestError(f"The {provider} OAuth provider is not configured.")
+        return client_id, issuers, jwks_url
+
+    @classmethod
+    def _jwks_client(cls, url: str) -> jwt.PyJWKClient:
+        with cls._jwks_lock:
+            if url not in cls._jwks_clients:
+                cls._jwks_clients[url] = jwt.PyJWKClient(url)
+            return cls._jwks_clients[url]
+
+    @staticmethod
+    def _email_claim(provider: str, claims: dict[str, object]) -> str:
+        if provider == "microsoft":
+            return str(claims.get("email") or claims.get("preferred_username") or "")
+        return str(claims.get("email", ""))
 
     async def _require_user(self, user_id: UUID) -> User:
         user = await self._repository.by_id(user_id)

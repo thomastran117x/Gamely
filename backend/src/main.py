@@ -28,12 +28,12 @@ def build_container(settings: Settings, services_factory: Callable[[Settings], A
     services.add_instance(Settings, settings)
     services.add_singleton(ApplicationServices, lambda resolver: services_factory(resolver.get(Settings)))
     services.add_scoped(AsyncSession, lambda resolver: cast(InfrastructureServices, resolver.get(ApplicationServices)).session_factory())
-    services.add_transient(AuthRepository, lambda resolver: AuthRepository(resolver.get(AsyncSession)))
+    services.add_scoped(AuthRepository, lambda resolver: AuthRepository(resolver.get(AsyncSession)))
     services.add_transient(TokenService, lambda resolver: TokenService(cast(InfrastructureServices, resolver.get(ApplicationServices)).redis, resolver.get(Settings)))
     services.add_transient(EmailPublisher, lambda resolver: EmailPublisher(cast(InfrastructureServices, resolver.get(ApplicationServices)).rabbitmq))
-    services.add_transient(AuthService, lambda resolver: AuthService(resolver.get(AuthRepository), resolver.get(TokenService), cast(InfrastructureServices, resolver.get(ApplicationServices)).redis, resolver.get(EmailPublisher), resolver.get(Settings)))
-    services.add_transient(OAuthService, lambda resolver: OAuthService(resolver.get(AuthRepository), resolver.get(TokenService), cast(InfrastructureServices, resolver.get(ApplicationServices)).redis, resolver.get(Settings)))
-    services.add_transient(AuthController, lambda resolver: AuthController(resolver.get(AuthService), resolver.get(OAuthService), resolver.get(TokenService), resolver.get(Settings)))
+    services.add_scoped(AuthService, lambda resolver: AuthService(resolver.get(AuthRepository), resolver.get(TokenService), cast(InfrastructureServices, resolver.get(ApplicationServices)).redis, resolver.get(EmailPublisher), resolver.get(Settings)))
+    services.add_scoped(OAuthService, lambda resolver: OAuthService(resolver.get(AuthRepository), resolver.get(TokenService), cast(InfrastructureServices, resolver.get(ApplicationServices)).redis, resolver.get(Settings)))
+    services.add_scoped(AuthController, lambda resolver: AuthController(resolver.get(AuthService), resolver.get(OAuthService), resolver.get(TokenService), resolver.get(Settings)))
     return services.build_provider()
 
 
@@ -46,7 +46,7 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 
 def create_app(settings: Settings | None = None, services_factory: Callable[[Settings], ApplicationServices] = InfrastructureServices) -> FastAPI:
-    app_settings = settings or Settings()
+    app_settings = settings or Settings()  # type: ignore[call-arg]
     container = build_container(app_settings, services_factory)
 
     @asynccontextmanager

@@ -1,13 +1,15 @@
 from pydantic import BaseModel, Field
 
+PASSWORD_MAX_LENGTH = 128
+
 
 class CredentialsRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=PASSWORD_MAX_LENGTH)
 
 
 class EmailRequest(BaseModel):
-    email: str
+    email: str = Field(max_length=320)
 
 
 class VerifyEmailRequest(EmailRequest):
@@ -15,17 +17,17 @@ class VerifyEmailRequest(EmailRequest):
 
 
 class ResetPasswordRequest(VerifyEmailRequest):
-    password: str
+    password: str = Field(max_length=PASSWORD_MAX_LENGTH)
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(max_length=PASSWORD_MAX_LENGTH)
+    new_password: str = Field(max_length=PASSWORD_MAX_LENGTH)
 
 
 class OAuthTokenRequest(BaseModel):
-    id_token: str
-    nonce: str
+    id_token: str = Field(max_length=16384)
+    nonce: str = Field(max_length=256)
 
 
 class TokenResponse(BaseModel):

@@ -31,7 +31,7 @@ async def send(job: EmailJob, settings: Settings) -> None:
 
 
 async def main() -> None:
-    settings = Settings()
+    settings = Settings()  # type: ignore[call-arg]
     connection = await connect_rabbitmq(settings.rabbitmq_url)
     channel = await connection.channel()
     await channel.set_qos(prefetch_count=settings.email_worker_concurrency)
@@ -59,7 +59,7 @@ async def main() -> None:
                 await message.ack()
             except Exception:
                 logger.exception("email_job_failed")
-                await message.nack(requeue=True)
+                await message.reject(requeue=False)
 
     await queue.consume(handle)
     try:
