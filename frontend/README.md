@@ -2,6 +2,16 @@
 
 This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 20.3.5.
 
+## Docker Compose
+
+Copy the repository-root `.env.example` to `.env`, then start the complete stack from the repository root:
+
+```bash
+docker compose up --build
+```
+
+The Angular SSR application is available at `http://localhost:3040` by default. Docker Compose supplies `API_BASE_URL=http://api:8000` to the frontend service for server-side API calls.
+
 ## Development server
 
 To start a local development server, run:
@@ -10,7 +20,7 @@ To start a local development server, run:
 ng serve
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+Once the server is running, open your browser and navigate to `http://localhost:3040/`. The application will automatically reload whenever you modify any of the source files.
 
 ## Code scaffolding
 
