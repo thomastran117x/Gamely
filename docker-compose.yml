@@ -100,6 +100,26 @@ services:
       timeout: 5s
       retries: 10
 
+  email-worker:
+    build:
+      context: ./backend
+    command: ["/app/.venv/bin/python", "-m", "src.workers.email_worker"]
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://games:games@rabbitmq:5672/}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      EMAIL_WORKER_CONCURRENCY: ${EMAIL_WORKER_CONCURRENCY:-10}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
 volumes:
   postgres_data:
   redis_data:
