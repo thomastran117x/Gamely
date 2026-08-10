@@ -11,13 +11,11 @@ from src.main import create_app
 
 
 @pytest.mark.integration
-def test_signup_login_and_refresh_against_compose() -> None:
+def test_signup_login_and_refresh_against_containers(
+    integration_settings: Settings,
+) -> None:
     email = f"auth-integration-{uuid4().hex}@example.com"
-    settings = Settings(
-        auth_jwt_secret="test-secret-with-at-least-thirty-two-characters",
-        auth_refresh_cookie_secure=False,
-    )
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(integration_settings)) as client:
         signup = client.post(
             "/auth/signup", json={"email": email, "password": "a-secure-password"}
         )
@@ -28,7 +26,7 @@ def test_signup_login_and_refresh_against_compose() -> None:
         )
         assert login.status_code == 200
         assert login.json()["token_type"] == "bearer"
-        assert settings.auth_refresh_cookie_name in login.cookies
+        assert integration_settings.auth_refresh_cookie_name in login.cookies
 
         refreshed = client.post("/auth/refresh")
         assert refreshed.status_code == 200
@@ -36,17 +34,15 @@ def test_signup_login_and_refresh_against_compose() -> None:
 
 
 @pytest.mark.integration
-def test_auth_security_and_revocation_flows_against_compose() -> None:
+def test_auth_security_and_revocation_flows_against_containers(
+    integration_settings: Settings,
+) -> None:
     email = f"auth-security-{uuid4().hex}@example.com"
     initial_password = "initial-password"
     replacement_password = "replacement-password"
-    settings = Settings(
-        auth_jwt_secret="test-secret-with-at-least-thirty-two-characters",
-        auth_refresh_cookie_secure=False,
-    )
-    cookie_name = settings.auth_refresh_cookie_name
+    cookie_name = integration_settings.auth_refresh_cookie_name
 
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(integration_settings)) as client:
         assert (
             client.post(
                 "/auth/signup", json={"email": email, "password": initial_password}
@@ -127,7 +123,7 @@ def test_auth_security_and_revocation_flows_against_compose() -> None:
             client.cookies.set(
                 cookie_name,
                 revoked_refresh,
-                path=settings.auth_refresh_cookie_path,
+                path=integration_settings.auth_refresh_cookie_path,
             )
             assert client.post("/auth/refresh").status_code == 401
 
@@ -151,6 +147,8 @@ def test_auth_security_and_revocation_flows_against_compose() -> None:
         current_refresh = current_login.cookies[cookie_name]
         assert client.post("/auth/logout").status_code == 204
         client.cookies.set(
-            cookie_name, current_refresh, path=settings.auth_refresh_cookie_path
+            cookie_name,
+            current_refresh,
+            path=integration_settings.auth_refresh_cookie_path,
         )
         assert client.post("/auth/refresh").status_code == 401
