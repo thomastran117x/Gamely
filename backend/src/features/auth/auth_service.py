@@ -19,8 +19,21 @@ from src.shared.exceptions import BadRequestError, ConflictError, UnauthorizedEr
 
 
 class AuthService:
-    def __init__(self, repository: AuthRepository, tokens: TokenService, redis: Redis, email: EmailPublisher, settings: Settings) -> None:
-        self._repository, self._tokens, self._redis, self._email, self._settings = repository, tokens, redis, email, settings
+    def __init__(
+        self,
+        repository: AuthRepository,
+        tokens: TokenService,
+        redis: Redis,
+        email: EmailPublisher,
+        settings: Settings,
+    ) -> None:
+        self._repository, self._tokens, self._redis, self._email, self._settings = (
+            repository,
+            tokens,
+            redis,
+            email,
+            settings,
+        )
         self._passwords = PasswordHash.recommended()
 
     async def signup(self, email: str, password: str) -> None:
@@ -29,22 +42,38 @@ class AuthService:
         if await self._repository.by_email(email):
             raise ConflictError("An account already exists for this email address.")
         try:
-            await self._repository.create_user(email, await asyncio.to_thread(self._passwords.hash, password))
+            await self._repository.create_user(
+                email, await asyncio.to_thread(self._passwords.hash, password)
+            )
             await self._send_code(email, "verify")
             await self._repository.commit()
         except IntegrityError as exc:
             await self._repository.rollback()
-            raise ConflictError("An account already exists for this email address.") from exc
+            raise ConflictError(
+                "An account already exists for this email address."
+            ) from exc
         except Exception:
             await self._repository.rollback()
             raise
 
     async def login(self, email: str, password: str) -> tuple[User, str, str]:
         user = await self._repository.by_email(self._email_address(email))
-        valid = user is not None and user.password_hash is not None and await asyncio.to_thread(self._passwords.verify, password, user.password_hash)
+        valid = (
+            user is not None
+            and user.password_hash is not None
+            and await asyncio.to_thread(
+                self._passwords.verify, password, user.password_hash
+            )
+        )
         if not valid or user is None:
             raise UnauthorizedError("The email address or password is incorrect.")
-        return user, self._tokens.issue_access(user.id, user.email, user.email_verified_at is not None), await self._tokens.issue_refresh(user.id)
+        return (
+            user,
+            self._tokens.issue_access(
+                user.id, user.email, user.email_verified_at is not None
+            ),
+            await self._tokens.issue_refresh(user.id),
+        )
 
     async def send_verification(self, email: str) -> None:
         user = await self._repository.by_email(self._email_address(email))
@@ -81,7 +110,9 @@ class AuthService:
     async def change_password(self, user_id: UUID, current: str, new: str) -> None:
         self._check_password(new)
         user = await self._require_user(user_id)
-        valid = user.password_hash is not None and await asyncio.to_thread(self._passwords.verify, current, user.password_hash)
+        valid = user.password_hash is not None and await asyncio.to_thread(
+            self._passwords.verify, current, user.password_hash
+        )
         if not valid:
             raise UnauthorizedError("The current password is incorrect.")
         user.password_hash = await asyncio.to_thread(self._passwords.hash, new)
@@ -90,7 +121,13 @@ class AuthService:
 
     async def refresh(self, value: str) -> tuple[User, str, str]:
         user = await self._require_user(await self._tokens.rotate_refresh(value))
-        return user, self._tokens.issue_access(user.id, user.email, user.email_verified_at is not None), await self._tokens.issue_refresh(user.id)
+        return (
+            user,
+            self._tokens.issue_access(
+                user.id, user.email, user.email_verified_at is not None
+            ),
+            await self._tokens.issue_refresh(user.id),
+        )
 
     async def _require_user(self, user_id: UUID) -> User:
         user = await self._repository.by_id(user_id)
@@ -104,10 +141,16 @@ class AuthService:
         if not await self._redis.set(cooldown, "1", ex=60, nx=True):
             raise BadRequestError("Please wait before requesting another code.")
         code = f"{secrets.randbelow(1_000_000):06d}"
-        expires_at = datetime.now(UTC) + timedelta(minutes=self._settings.auth_code_minutes)
+        expires_at = datetime.now(UTC) + timedelta(
+            minutes=self._settings.auth_code_minutes
+        )
         payload = f"{hashlib.sha256(code.encode()).hexdigest()}:0"
         try:
-            await self._redis.set(code_key, payload, ex=timedelta(minutes=self._settings.auth_code_minutes))
+            await self._redis.set(
+                code_key,
+                payload,
+                ex=timedelta(minutes=self._settings.auth_code_minutes),
+            )
             await self._email.publish(EmailJob(email, purpose, code, expires_at))
         except Exception:
             await self._redis.delete(cooldown, code_key)
@@ -122,7 +165,9 @@ class AuthService:
         if int(attempts) >= 4:
             await self._redis.delete(key)
             return False
-        if not secrets.compare_digest(digest, hashlib.sha256(code.encode()).hexdigest()):
+        if not secrets.compare_digest(
+            digest, hashlib.sha256(code.encode()).hexdigest()
+        ):
             ttl = await self._redis.ttl(key)
             await self._redis.set(key, f"{digest}:{int(attempts) + 1}", ex=max(ttl, 1))
             return False

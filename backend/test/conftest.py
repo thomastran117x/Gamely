@@ -4,7 +4,9 @@ from collections.abc import Generator
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ.setdefault("AUTH_JWT_SECRET", "test-secret-with-at-least-thirty-two-characters")
+os.environ.setdefault(
+    "AUTH_JWT_SECRET", "test-secret-with-at-least-thirty-two-characters"
+)
 
 from src.application.contracts import ApplicationServices
 from src.application.environment.environment_manager import Settings

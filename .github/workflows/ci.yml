@@ -95,6 +95,8 @@ jobs:
 
   backend-integration:
     runs-on: ubuntu-latest
+    env:
+      AUTH_JWT_SECRET: ci-only-auth-secret-at-least-32-characters
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -103,6 +105,8 @@ jobs:
       - run: uv sync --all-groups --frozen
         working-directory: backend
       - run: docker compose up -d --wait --wait-timeout 180 postgres redis opensearch rabbitmq
+      - run: uv run alembic upgrade head
+        working-directory: backend
       - run: uv run pytest -m integration
         working-directory: backend
       - if: always()

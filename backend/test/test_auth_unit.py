@@ -43,7 +43,9 @@ class FakeRedis:
         self.values: dict[str, str] = {}
         self.sets: dict[str, Set[str]] = {}
 
-    async def eval(self, _: str, __: int, refresh_key: str, reuse_key: str, digest: str, ___: int) -> list[str]:
+    async def eval(
+        self, _: str, __: int, refresh_key: str, reuse_key: str, digest: str, ___: int
+    ) -> list[str]:
         user_id = self.values.get(refresh_key)
         if user_id is not None:
             await self.delete(refresh_key)
@@ -51,7 +53,11 @@ class FakeRedis:
             self.values[reuse_key] = user_id
             return ["rotated", user_id]
         reused_user_id = self.values.get(reuse_key)
-        return ["reused", reused_user_id] if reused_user_id is not None else ["missing", ""]
+        return (
+            ["reused", reused_user_id]
+            if reused_user_id is not None
+            else ["missing", ""]
+        )
 
     def pipeline(self) -> FakePipeline:
         return FakePipeline(self)
@@ -88,7 +94,10 @@ class FakeRedis:
 @pytest.mark.asyncio
 async def test_refresh_token_rotates_and_cannot_be_reused() -> None:
     redis = FakeRedis()
-    tokens = TokenService(redis, Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters"))  # type: ignore[arg-type]
+    tokens = TokenService(
+        redis,  # type: ignore[arg-type]
+        Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters"),
+    )
     user_id = uuid4()
 
     refresh = await tokens.issue_refresh(user_id)

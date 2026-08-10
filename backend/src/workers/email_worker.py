@@ -19,15 +19,28 @@ def message_for(job: EmailJob, settings: Settings) -> EmailMessage:
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = job.recipient
-    message["Subject"] = "Verify your Games account" if job.template == "verify" else "Reset your Games password"
-    message.set_content(f"Your Games {job.template} code is: {job.code}\nThis code expires at {job.expires_at.isoformat()}.")
+    message["Subject"] = (
+        "Verify your Games account"
+        if job.template == "verify"
+        else "Reset your Games password"
+    )
+    message.set_content(
+        f"Your Games {job.template} code is: {job.code}\nThis code expires at {job.expires_at.isoformat()}."
+    )
     return message
 
 
 async def send(job: EmailJob, settings: Settings) -> None:
     if not settings.smtp_host or not settings.smtp_from:
         raise RuntimeError("SMTP is not configured")
-    await aiosmtplib.send(message_for(job, settings), hostname=settings.smtp_host, port=settings.smtp_port, username=settings.smtp_username or None, password=settings.smtp_password or None, start_tls=settings.smtp_starttls)
+    await aiosmtplib.send(
+        message_for(job, settings),
+        hostname=settings.smtp_host,
+        port=settings.smtp_port,
+        username=settings.smtp_username or None,
+        password=settings.smtp_password or None,
+        start_tls=settings.smtp_starttls,
+    )
 
 
 async def main() -> None:
@@ -52,10 +65,28 @@ async def main() -> None:
             try:
                 job = EmailJob.from_bytes(message.body)
                 if job.attempts >= len(RETRY_DELAYS):
-                    await exchange.publish(aio_pika.Message(message.body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT), routing_key="dead")
+                    await exchange.publish(
+                        aio_pika.Message(
+                            message.body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                        ),
+                        routing_key="dead",
+                    )
                 else:
-                    retry = EmailJob(job.recipient, job.template, job.code, job.expires_at, job.attempts + 1, job.id)
-                    await exchange.publish(aio_pika.Message(retry.to_bytes(), delivery_mode=aio_pika.DeliveryMode.PERSISTENT), routing_key=f"retry.{RETRY_DELAYS[job.attempts]}")
+                    retry = EmailJob(
+                        job.recipient,
+                        job.template,
+                        job.code,
+                        job.expires_at,
+                        job.attempts + 1,
+                        job.id,
+                    )
+                    await exchange.publish(
+                        aio_pika.Message(
+                            retry.to_bytes(),
+                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                        ),
+                        routing_key=f"retry.{RETRY_DELAYS[job.attempts]}",
+                    )
                 await message.ack()
             except Exception:
                 logger.exception("email_job_failed")

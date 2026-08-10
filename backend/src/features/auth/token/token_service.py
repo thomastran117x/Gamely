@@ -35,12 +35,26 @@ class TokenService:
 
     def issue_access(self, user_id: UUID, email: str, verified: bool) -> str:
         now = datetime.now(UTC)
-        claims = {"sub": str(user_id), "email": email, "verified": verified, "iss": self._settings.auth_jwt_issuer, "aud": self._settings.auth_jwt_audience, "iat": now, "exp": now + timedelta(minutes=self._settings.auth_access_token_minutes)}
+        claims = {
+            "sub": str(user_id),
+            "email": email,
+            "verified": verified,
+            "iss": self._settings.auth_jwt_issuer,
+            "aud": self._settings.auth_jwt_audience,
+            "iat": now,
+            "exp": now + timedelta(minutes=self._settings.auth_access_token_minutes),
+        }
         return jwt.encode(claims, self._settings.auth_jwt_secret, algorithm="HS256")
 
     def decode_access(self, value: str) -> UUID:
         try:
-            claims = jwt.decode(value, self._settings.auth_jwt_secret, algorithms=["HS256"], issuer=self._settings.auth_jwt_issuer, audience=self._settings.auth_jwt_audience)
+            claims = jwt.decode(
+                value,
+                self._settings.auth_jwt_secret,
+                algorithms=["HS256"],
+                issuer=self._settings.auth_jwt_issuer,
+                audience=self._settings.auth_jwt_audience,
+            )
             return UUID(str(claims["sub"]))
         except (jwt.PyJWTError, KeyError, ValueError) as exc:
             raise UnauthorizedError("The access token is invalid or expired.") from exc
@@ -58,7 +72,14 @@ class TokenService:
 
     async def rotate_refresh(self, value: str) -> UUID:
         digest = self._digest(value)
-        result = await self._redis.eval(_ROTATE_REFRESH, 2, f"auth:refresh:{digest}", f"auth:reuse:{digest}", digest, self._settings.auth_refresh_token_days * 86400)
+        result = await self._redis.eval(
+            _ROTATE_REFRESH,
+            2,
+            f"auth:refresh:{digest}",
+            f"auth:reuse:{digest}",
+            digest,
+            self._settings.auth_refresh_token_days * 86400,
+        )
         status, user_id = self._result_pair(result)
         if status == "reused":
             await self.revoke_all(UUID(user_id))
@@ -89,7 +110,9 @@ class TokenService:
     def _result_pair(value: object) -> tuple[str, str]:
         if not isinstance(value, list) or len(value) != 2:
             return "missing", ""
-        return TokenService._text(value[0]) or "missing", TokenService._text(value[1]) or ""
+        return TokenService._text(value[0]) or "missing", TokenService._text(
+            value[1]
+        ) or ""
 
     @staticmethod
     def _text(value: object) -> str | None:
@@ -98,4 +121,6 @@ class TokenService:
         return value if isinstance(value, str) else None
 
     def _digest(self, value: str) -> str:
-        return hmac.new(self._settings.auth_jwt_secret.encode(), value.encode(), hashlib.sha256).hexdigest()
+        return hmac.new(
+            self._settings.auth_jwt_secret.encode(), value.encode(), hashlib.sha256
+        ).hexdigest()

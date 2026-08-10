@@ -44,15 +44,19 @@ async def test_ioc_honours_scoped_lifetime_and_disposes_instances() -> None:
 
     assert first.closed is True
 
+
 class ScopedConsumer:
     def __init__(self, dependency: ScopedService) -> None:
         self.dependency = dependency
+
 
 @pytest.mark.asyncio
 async def test_scoped_service_can_depend_on_another_scoped_service() -> None:
     services = ServiceCollection()
     services.add_scoped(ScopedService, lambda _resolver: ScopedService())
-    services.add_scoped(ScopedConsumer, lambda resolver: ScopedConsumer(resolver.get(ScopedService)))
+    services.add_scoped(
+        ScopedConsumer, lambda resolver: ScopedConsumer(resolver.get(ScopedService))
+    )
     async with services.build_provider().create_scope() as scope:
         consumer = scope.get(ScopedConsumer)
         assert consumer.dependency is scope.get(ScopedService)
