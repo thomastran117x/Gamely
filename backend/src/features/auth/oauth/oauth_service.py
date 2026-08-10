@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from datetime import UTC, datetime
 from threading import RLock
 from typing import ClassVar
 from uuid import UUID
@@ -73,9 +74,13 @@ class OAuthService:
         if identity is not None:
             user = await self._require_user(identity.user_id)
         else:
-            user = await self._repository.by_email(
-                email
-            ) or await self._repository.create_user(email, None, verified=True)
+            existing_user = await self._repository.by_email(email)
+            if existing_user is None:
+                user = await self._repository.create_user(email, None, verified=True)
+            else:
+                user = existing_user
+                if user.email_verified_at is None:
+                    user.email_verified_at = datetime.now(UTC)
             await self._repository.add_identity(user, provider, str(claims["sub"]))
             await self._repository.commit()
         return (

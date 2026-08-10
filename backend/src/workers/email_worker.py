@@ -43,6 +43,55 @@ async def send(job: EmailJob, settings: Settings) -> None:
     )
 
 
+async def handle_message(
+    message: aio_pika.abc.AbstractIncomingMessage,
+    exchange: aio_pika.abc.AbstractExchange,
+    settings: Settings,
+) -> None:
+    try:
+        job = EmailJob.from_bytes(message.body)
+    except (ValueError, KeyError, TypeError):
+        await message.reject(requeue=False)
+        return
+
+    if expired(job):
+        await message.ack()
+        return
+
+    try:
+        await send(job, settings)
+    except (aiosmtplib.SMTPRecipientRefused, aiosmtplib.SMTPRecipientsRefused):
+        await message.reject(requeue=False)
+        return
+    except Exception:
+        try:
+            if job.attempts >= len(RETRY_DELAYS):
+                body = message.body
+                routing_key = "dead"
+            else:
+                retry = EmailJob(
+                    job.recipient,
+                    job.template,
+                    job.code,
+                    job.expires_at,
+                    job.attempts + 1,
+                    job.id,
+                )
+                body = retry.to_bytes()
+                routing_key = f"retry.{RETRY_DELAYS[job.attempts]}"
+            await exchange.publish(
+                aio_pika.Message(body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT),
+                routing_key=routing_key,
+            )
+            await message.ack()
+        except Exception:
+            logger.exception("email_job_failed")
+            await message.reject(requeue=False)
+        return
+
+    await message.ack()
+
+
 async def main() -> None:
     settings = Settings()  # type: ignore[call-arg]
     connection = await connect_rabbitmq(settings.rabbitmq_url)
@@ -52,45 +101,7 @@ async def main() -> None:
     queue = await channel.get_queue("auth.email.primary")
 
     async def handle(message: aio_pika.abc.AbstractIncomingMessage) -> None:
-        try:
-            job = EmailJob.from_bytes(message.body)
-            if expired(job):
-                await message.ack()
-                return
-            await send(job, settings)
-            await message.ack()
-        except (ValueError, KeyError, TypeError):
-            await message.reject(requeue=False)
-        except Exception:
-            try:
-                job = EmailJob.from_bytes(message.body)
-                if job.attempts >= len(RETRY_DELAYS):
-                    await exchange.publish(
-                        aio_pika.Message(
-                            message.body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-                        ),
-                        routing_key="dead",
-                    )
-                else:
-                    retry = EmailJob(
-                        job.recipient,
-                        job.template,
-                        job.code,
-                        job.expires_at,
-                        job.attempts + 1,
-                        job.id,
-                    )
-                    await exchange.publish(
-                        aio_pika.Message(
-                            retry.to_bytes(),
-                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                        ),
-                        routing_key=f"retry.{RETRY_DELAYS[job.attempts]}",
-                    )
-                await message.ack()
-            except Exception:
-                logger.exception("email_job_failed")
-                await message.reject(requeue=False)
+        await handle_message(message, exchange, settings)
 
     await queue.consume(handle)
     try:

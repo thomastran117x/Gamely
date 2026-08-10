@@ -23,6 +23,18 @@ class EmailJob:
     attempts: int = 0
     id: str = ""
 
+    def __post_init__(self) -> None:
+        if "@" not in self.recipient or len(self.recipient) > 320:
+            raise ValueError("invalid email recipient")
+        if self.template not in {"verify", "reset"}:
+            raise ValueError("invalid email template")
+        if len(self.code) != 6 or not self.code.isdigit():
+            raise ValueError("invalid authentication code")
+        if self.expires_at.tzinfo is None or self.expires_at.utcoffset() is None:
+            raise ValueError("email job expiration must include a timezone")
+        if self.attempts < 0:
+            raise ValueError("email job attempts cannot be negative")
+
     def to_bytes(self) -> bytes:
         data = asdict(self)
         data["expires_at"] = self.expires_at.isoformat()
