@@ -11,6 +11,7 @@ os.environ.setdefault(
 from src.application.contracts import ApplicationServices
 from src.application.environment.environment_manager import Settings
 from src.main import create_app
+from test.integration_containers import integration_container_stack
 
 
 class FakeServices(ApplicationServices):
@@ -42,3 +43,9 @@ def client(settings: Settings) -> Generator[TestClient]:
     app = create_app(settings=settings, services_factory=FakeServices)
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(scope="module")
+def integration_settings() -> Generator[Settings]:
+    with integration_container_stack() as container_settings:
+        yield container_settings

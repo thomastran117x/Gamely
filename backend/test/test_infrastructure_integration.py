@@ -7,10 +7,10 @@ from src.main import create_app
 
 
 @pytest.mark.integration
-async def test_compose_dependencies_are_reachable() -> None:
-    services = InfrastructureServices(
-        Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters")
-    )
+async def test_container_dependencies_are_reachable(
+    integration_settings: Settings,
+) -> None:
+    services = InfrastructureServices(integration_settings)
     await services.connect()
     try:
         async with services.engine.connect() as connection:
@@ -23,12 +23,10 @@ async def test_compose_dependencies_are_reachable() -> None:
 
 
 @pytest.mark.integration
-def test_readiness_against_compose_dependencies() -> None:
+def test_readiness_against_container_dependencies(
+    integration_settings: Settings,
+) -> None:
     from fastapi.testclient import TestClient
 
-    with TestClient(
-        create_app(
-            Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters")
-        )
-    ) as client:
+    with TestClient(create_app(integration_settings)) as client:
         assert client.get("/health/ready").status_code == 200

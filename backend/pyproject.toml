@@ -7,7 +7,14 @@ dependencies = [
     "aioboto3>=15.0.0", "aio-pika>=9.5.0", "aiosmtplib>=4.0.0", "alembic>=1.16.0", "asyncpg>=0.30.0", "fastapi>=0.115.0", "greenlet>=3.1.0", "opensearch-py>=2.8.0", "pydantic-settings>=2.10.0", "pwdlib[argon2]>=0.2.1", "PyJWT[crypto]>=2.10.1", "redis>=5.2.0", "sqlalchemy>=2.0.0", "uvicorn[standard]>=0.34.0",
 ]
 [dependency-groups]
-dev = ["httpx>=0.28.0", "mypy>=1.15.0", "pytest>=8.3.0", "pytest-asyncio>=0.25.0", "ruff>=0.11.0"]
+dev = [
+    "httpx>=0.28.0",
+    "mypy>=1.15.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "ruff>=0.11.0",
+    "testcontainers[opensearch,rabbitmq,redis]>=4.15.0",
+]
 [tool.mypy]
 python_version = "3.13"
 files = ["src", "test"]
@@ -16,6 +23,6 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 addopts = "-m 'not integration'"
 asyncio_mode = "auto"
-markers = ["integration: requires the Docker Compose infrastructure to be running"]
+markers = ["integration: requires Docker; Testcontainers manages infrastructure"]
 pythonpath = ["."]
 testpaths = ["test"]

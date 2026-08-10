@@ -45,7 +45,9 @@ cd backend
 uv run pytest
 ```
 
-Start Compose first, then run live dependency checks explicitly:
+Integration tests require Docker. They start isolated PostgreSQL, Redis,
+OpenSearch, and RabbitMQ containers for each integration test module, apply
+migrations once, and remove the containers after the module finishes:
 
 ```powershell
 uv run pytest -m integration

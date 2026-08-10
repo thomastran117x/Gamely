@@ -104,10 +104,5 @@ jobs:
           enable-cache: true
       - run: uv sync --all-groups --frozen
         working-directory: backend
-      - run: docker compose up -d --wait --wait-timeout 180 postgres redis opensearch rabbitmq
-      - run: uv run alembic upgrade head
-        working-directory: backend
       - run: uv run pytest -m integration
         working-directory: backend
-      - if: always()
-        run: docker compose down -v
