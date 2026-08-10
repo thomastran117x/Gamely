@@ -120,13 +120,14 @@ class AuthService:
         await self._tokens.revoke_all(user.id)
 
     async def refresh(self, value: str) -> tuple[User, str, str]:
-        user = await self._require_user(await self._tokens.rotate_refresh(value))
+        user_id, family_id = await self._tokens.rotate_refresh(value)
+        user = await self._require_user(user_id)
         return (
             user,
             self._tokens.issue_access(
                 user.id, user.email, user.email_verified_at is not None
             ),
-            await self._tokens.issue_refresh(user.id),
+            await self._tokens.issue_refresh(user.id, family_id),
         )
 
     async def _require_user(self, user_id: UUID) -> User:

@@ -1,7 +1,15 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from src.application.environment.environment_manager import Settings
+
+
+def test_settings_loads_env_from_repository_root() -> None:
+    expected = Path(__file__).resolve().parents[2] / ".env"
+
+    assert Settings.model_config["env_file"] == expected
 
 
 def test_settings_reads_environment_values(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from builtins import set as builtin_set
-from typing import Any, Set
+from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -41,23 +41,18 @@ class FakePipeline:
 class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
-        self.sets: dict[str, Set[str]] = {}
+        self.sets: dict[str, builtin_set[str]] = {}
 
     async def eval(
-        self, _: str, __: int, refresh_key: str, reuse_key: str, digest: str, ___: int
+        self, _: str, __: int, refresh_key: str, reuse_key: str, ___: int
     ) -> list[str]:
-        user_id = self.values.get(refresh_key)
-        if user_id is not None:
+        session = self.values.get(refresh_key)
+        if session is not None:
             await self.delete(refresh_key)
-            await self.srem(f"auth:sessions:{user_id}", digest)
-            self.values[reuse_key] = user_id
-            return ["rotated", user_id]
-        reused_user_id = self.values.get(reuse_key)
-        return (
-            ["reused", reused_user_id]
-            if reused_user_id is not None
-            else ["missing", ""]
-        )
+            self.values[reuse_key] = session
+            return ["rotated", session]
+        reused_session = self.values.pop(reuse_key, None)
+        return ["reused", reused_session] if reused_session else ["missing", ""]
 
     def pipeline(self) -> FakePipeline:
         return FakePipeline(self)
@@ -81,7 +76,7 @@ class FakeRedis:
     async def srem(self, key: str, value: str) -> None:
         self.sets.setdefault(key, builtin_set()).discard(value)
 
-    async def smembers(self, key: str) -> Set[str]:
+    async def smembers(self, key: str) -> builtin_set[str]:
         return self.sets.get(key, builtin_set())
 
     async def expire(self, _: str, __: timedelta) -> None:
@@ -102,10 +97,35 @@ async def test_refresh_token_rotates_and_cannot_be_reused() -> None:
 
     refresh = await tokens.issue_refresh(user_id)
 
-    assert await tokens.rotate_refresh(refresh) == user_id
+    rotated_user_id, family_id = await tokens.rotate_refresh(refresh)
+    assert rotated_user_id == user_id
+    replacement = await tokens.issue_refresh(user_id, family_id)
     with pytest.raises(UnauthorizedError):
         await tokens.rotate_refresh(refresh)
     assert await redis.smembers(f"auth:sessions:{user_id}") == set()
+    with pytest.raises(UnauthorizedError):
+        await tokens.rotate_refresh(replacement)
+
+
+@pytest.mark.asyncio
+async def test_reused_refresh_does_not_revoke_a_new_session_family() -> None:
+    redis = FakeRedis()
+    tokens = TokenService(
+        redis,  # type: ignore[arg-type]
+        Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters"),
+    )
+    user_id = uuid4()
+    stale = await tokens.issue_refresh(user_id)
+    _, family_id = await tokens.rotate_refresh(stale)
+    await tokens.issue_refresh(user_id, family_id)
+    unrelated = await tokens.issue_refresh(user_id)
+
+    with pytest.raises(UnauthorizedError):
+        await tokens.rotate_refresh(stale)
+
+    assert (await tokens.rotate_refresh(unrelated))[0] == user_id
+    with pytest.raises(UnauthorizedError):
+        await tokens.rotate_refresh(stale)
 
 
 @pytest.mark.asyncio
