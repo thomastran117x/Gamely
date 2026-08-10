@@ -1,7 +1,12 @@
+import os
 from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ.setdefault(
+    "AUTH_JWT_SECRET", "test-secret-with-at-least-thirty-two-characters"
+)
 
 from src.application.contracts import ApplicationServices
 from src.application.environment.environment_manager import Settings
@@ -29,7 +34,7 @@ class FakeServices(ApplicationServices):
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings()
+    return Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters")
 
 
 @pytest.fixture

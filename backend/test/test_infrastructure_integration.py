@@ -8,7 +8,9 @@ from src.main import create_app
 
 @pytest.mark.integration
 async def test_compose_dependencies_are_reachable() -> None:
-    services = InfrastructureServices(Settings())
+    services = InfrastructureServices(
+        Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters")
+    )
     await services.connect()
     try:
         async with services.engine.connect() as connection:
@@ -24,5 +26,9 @@ async def test_compose_dependencies_are_reachable() -> None:
 def test_readiness_against_compose_dependencies() -> None:
     from fastapi.testclient import TestClient
 
-    with TestClient(create_app(Settings())) as client:
+    with TestClient(
+        create_app(
+            Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters")
+        )
+    ) as client:
         assert client.get("/health/ready").status_code == 200

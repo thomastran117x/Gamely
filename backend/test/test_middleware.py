@@ -8,7 +8,10 @@ from test.conftest import FakeServices
 
 
 def create_test_app() -> FastAPI:
-    app = create_app(Settings(), services_factory=FakeServices)
+    app = create_app(
+        Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters"),
+        services_factory=FakeServices,
+    )
 
     @app.get("/custom-error")
     async def custom_error() -> None:
