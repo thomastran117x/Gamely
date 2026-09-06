@@ -78,6 +78,36 @@ async def test_filter_writes_carry_the_configured_capacity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_filter_stops_being_trusted_when_a_write_is_lost() -> None:
+    emails, redis, _ = make_filter()
+    await emails.remember("known@example.com")
+    redis.filter_error = ConnectionError("redis is unreachable")
+
+    await emails.remember("lost@example.com")
+
+    # The caller commits the address regardless, so a filter still trusted after
+    # dropping it would report a miss for a registered address.
+    redis.filter_error = None
+    assert await emails.might_exist("lost@example.com") is True
+    assert await emails.might_exist("anyone@example.com") is True
+
+
+@pytest.mark.asyncio
+async def test_filter_survives_a_failure_to_withdraw_trust() -> None:
+    emails, redis, _ = make_filter()
+
+    async def unreachable(*_: object, **__: object) -> object:
+        raise ConnectionError("redis is unreachable")
+
+    redis.filter_error = ConnectionError("redis is unreachable")
+    redis.delete = unreachable  # type: ignore[method-assign, assignment]
+
+    await emails.remember("lost@example.com")
+
+    assert await emails.might_exist("lost@example.com") is True
+
+
+@pytest.mark.asyncio
 async def test_filter_reports_a_hit_until_the_warmer_marks_it_built() -> None:
     redis = FakeRedis()
     settings = Settings(auth_jwt_secret=JWT_SECRET)

@@ -53,8 +53,9 @@ class EmailFilterWarmer:
             logger.warning("email_filter_warm_failed", exc_info=True)
 
     async def _warm(self) -> None:
-        if not await self._needs_rebuild():
-            return
+        # The lock is taken before anything destructive: a replica that dropped
+        # the key first could delete a filter another replica was midway through
+        # building, which would then be marked ready while missing entries.
         token = secrets.token_urlsafe(16)
         if not await self._redis.set(
             EMAIL_FILTER_LOCK_KEY,
@@ -66,32 +67,21 @@ class EmailFilterWarmer:
             return
         try:
             await self._rebuild()
-        finally:
+        except Exception:
+            # Released so another replica can retry immediately.
             await self._redis.eval(_RELEASE_LOCK, 1, EMAIL_FILTER_LOCK_KEY, token)
-
-    async def _needs_rebuild(self) -> bool:
-        # Plain EXISTS, not CF.INFO: it needs no module and does not raise on a
-        # missing key.
-        if not await self._filter.key_exists():
-            return True
-        # CF.RESERVE freezes its parameters, so a settings change only lands by
-        # dropping the key and building it again.
-        if not await self._filter.is_ready():
-            await self._filter.drop()
-            return True
-        # An unclean Redis restart can lose recent writes to the last snapshot
-        # while leaving the key in place, which the checks above cannot see.
-        async with self._session_factory() as session:
-            users = await AuthRepository(session).count_users()
-        if await self._filter.inserted_count() < users:
-            await self._filter.drop()
-            return True
-        return False
+            raise
+        # Left to expire on success, which throttles repeat rebuilds across a
+        # rolling deploy without needing to ask whether one was necessary.
 
     async def _rebuild(self) -> None:
-        # Cleared first so a rebuild that fails part-way leaves the filter marked
-        # untrustworthy rather than quietly answering misses.
-        await self._filter.mark_unready()
+        # Rebuilt unconditionally rather than when some staleness check fires.
+        # A filter can silently lose entries to a snapshot restore, and no cheap
+        # comparison proves completeness: a count matching the user total can
+        # still hide a missing address behind a phantom left by a rolled-back
+        # signup. Dropping first also clears a marker, so a rebuild that fails
+        # part-way leaves the filter untrusted rather than answering misses.
+        await self._filter.drop()
         await self._filter.reserve()
         total = 0
         async with self._session_factory() as session:

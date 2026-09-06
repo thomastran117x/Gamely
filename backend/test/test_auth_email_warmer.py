@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 from types import TracebackType
-from typing import cast
+from typing import Self, cast
 from uuid import uuid4
 
 import pytest
@@ -32,7 +32,7 @@ class FakeSession:
         self.error = error
         self.batch_sizes: list[int] = []
 
-    async def __aenter__(self) -> FakeSession:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(
@@ -112,20 +112,10 @@ async def test_warmer_builds_the_filter_when_the_key_is_absent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_warmer_skips_the_rebuild_when_the_filter_is_current() -> None:
-    warmer, redis, factory = make_warmer(["a@example.com"])
-    await warmer.warm()
-    factory.session.batch_sizes.clear()
-
-    await warmer.warm()
-
-    assert factory.session.batch_sizes == []
-
-
-@pytest.mark.asyncio
-async def test_warmer_rebuilds_when_the_parameter_fingerprint_changes() -> None:
+async def test_warmer_rebuilds_with_the_current_parameters() -> None:
     warmer, redis, _ = make_warmer(["a@example.com"])
     await warmer.warm()
+    redis.values.pop(EMAIL_FILTER_LOCK_KEY, None)
 
     resized, _, factory = make_warmer(
         ["a@example.com"], redis=redis, auth_email_filter_capacity=5000
@@ -138,16 +128,30 @@ async def test_warmer_rebuilds_when_the_parameter_fingerprint_changes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_warmer_rebuilds_when_the_filter_lost_recent_writes() -> None:
+async def test_warmer_discards_a_filter_that_lost_entries() -> None:
     warmer, redis, _ = make_warmer(["a@example.com", "b@example.com"])
     await warmer.warm()
-    # Simulate a snapshot restore that kept the key but dropped an entry.
+    # Simulate a snapshot restore that kept the key but dropped a recent write.
     redis.filters[EMAIL_FILTER_KEY].discard("b@example.com")
-    redis.inserted[EMAIL_FILTER_KEY] = 1
+    redis.values.pop(EMAIL_FILTER_LOCK_KEY, None)
 
-    await warmer.warm()
+    rewarmed, _, _ = make_warmer(["a@example.com", "b@example.com"], redis=redis)
+    await rewarmed.warm()
 
     assert redis.filters[EMAIL_FILTER_KEY] == {"a@example.com", "b@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_warmer_holds_the_lock_after_a_rebuild_to_throttle_replicas() -> None:
+    warmer, redis, _ = make_warmer(["a@example.com"])
+    await warmer.warm()
+
+    # A rolling deploy must not rebuild once per replica.
+    follower, _, factory = make_warmer(["a@example.com"], redis=redis)
+    await follower.warm()
+
+    assert factory.session.batch_sizes == []
+    assert redis.values[EMAIL_FILTER_LOCK_KEY]
 
 
 @pytest.mark.asyncio
@@ -162,15 +166,6 @@ async def test_warmer_skips_the_rebuild_when_another_replica_holds_the_lock() ->
 
 
 @pytest.mark.asyncio
-async def test_warmer_releases_the_lock_after_a_rebuild() -> None:
-    warmer, redis, _ = make_warmer(["a@example.com"])
-
-    await warmer.warm()
-
-    assert EMAIL_FILTER_LOCK_KEY not in redis.values
-
-
-@pytest.mark.asyncio
 async def test_warmer_releases_the_lock_after_a_failed_rebuild() -> None:
     warmer, redis, _ = make_warmer(["a@example.com"])
     redis.filter_error = ResponseError("unknown command 'CF.RESERVE'")
@@ -182,7 +177,7 @@ async def test_warmer_releases_the_lock_after_a_failed_rebuild() -> None:
 
 @pytest.mark.asyncio
 async def test_warmer_leaves_a_lock_owned_by_another_replica_alone() -> None:
-    warmer, redis, _ = make_warmer(["a@example.com"])
+    warmer, redis, _ = make_warmer(["a@example.com"], error=RuntimeError("no database"))
     original_set = redis.set
 
     async def steal_lock_after_acquiring(
@@ -240,6 +235,20 @@ async def test_warmer_swallows_a_missing_module() -> None:
     await warmer.warm()
 
     assert redis.filters == {}
+
+
+@pytest.mark.asyncio
+async def test_warmer_never_drops_a_filter_it_does_not_hold_the_lock_for() -> None:
+    warmer, redis, _ = make_warmer(["a@example.com"])
+    await warmer.warm()
+    redis.values[EMAIL_FILTER_LOCK_KEY] = "another-replica"
+
+    # A second replica must not delete a filter the lock holder is rebuilding.
+    follower, _, _ = make_warmer(["a@example.com"], redis=redis)
+    await follower.warm()
+
+    assert redis.filters[EMAIL_FILTER_KEY] == {"a@example.com"}
+    assert redis.values[EMAIL_FILTER_META_KEY]
 
 
 @pytest.mark.asyncio

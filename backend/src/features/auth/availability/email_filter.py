@@ -57,3 +57,15 @@ class EmailFilter:
             await self._filter.add(email)
         except Exception:
             logger.warning("email_filter_write_failed", exc_info=True)
+            # The caller is about to commit this address. A filter that keeps its
+            # ready marker without it would report a miss for a registered
+            # address, so trust is withdrawn until the next rebuild.
+            await self._withdraw_trust()
+
+    async def _withdraw_trust(self) -> None:
+        try:
+            await self._filter.mark_unready()
+        except Exception:
+            # Redis is unreachable, so lookups are failing too and already
+            # degrade to the database; the next rebuild restores the marker.
+            logger.warning("email_filter_invalidate_failed", exc_info=True)
