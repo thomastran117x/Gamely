@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.application.environment.environment_manager import Settings
 from src.main import create_app
-from src.shared.exceptions import NotFoundError
+from src.shared.exceptions import NotFoundError, TooManyRequestsError
 from test.conftest import FakeServices
 
 
@@ -16,6 +16,10 @@ def create_test_app() -> FastAPI:
     @app.get("/custom-error")
     async def custom_error() -> None:
         raise NotFoundError("Game not found.")
+
+    @app.get("/throttled")
+    async def throttled() -> None:
+        raise TooManyRequestsError()
 
     @app.get("/http-error")
     async def http_error() -> None:
@@ -35,6 +39,19 @@ def test_exception_middleware_maps_application_errors() -> None:
     assert response.status_code == 404
     assert response.json() == {
         "error": {"code": "not_found", "message": "Game not found."}
+    }
+
+
+def test_exception_middleware_maps_throttling_to_429() -> None:
+    with TestClient(create_test_app(), raise_server_exceptions=False) as client:
+        response = client.get("/throttled")
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "error": {
+            "code": "too_many_requests",
+            "message": "Too many requests. Please try again later.",
+        }
     }
 
 

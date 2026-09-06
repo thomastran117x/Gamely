@@ -13,6 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from src.application.environment.environment_manager import Settings
 from src.features.auth.auth_model import User
 from src.features.auth.auth_repository import AuthRepository
+from src.features.auth.availability.email_filter import EmailFilter
+from src.features.auth.email_address import normalize_email
 from src.features.auth.token.token_service import TokenService
 from src.infrastructure.email import EmailJob, EmailPublisher
 from src.shared.exceptions import BadRequestError, ConflictError, UnauthorizedError
@@ -25,13 +27,22 @@ class AuthService:
         tokens: TokenService,
         redis: Redis,
         email: EmailPublisher,
+        emails: EmailFilter,
         settings: Settings,
     ) -> None:
-        self._repository, self._tokens, self._redis, self._email, self._settings = (
+        (
+            self._repository,
+            self._tokens,
+            self._redis,
+            self._email,
+            self._emails,
+            self._settings,
+        ) = (
             repository,
             tokens,
             redis,
             email,
+            emails,
             settings,
         )
         self._passwords = PasswordHash.recommended()
@@ -39,16 +50,27 @@ class AuthService:
     async def signup(self, email: str, password: str) -> None:
         email = self._email_address(email)
         self._check_password(password)
-        if await self._repository.by_email(email):
+        # A filter miss means the address is definitely free, so the uniqueness
+        # lookup is skipped entirely; a hit falls through to the database.
+        if await self._emails.might_exist(email) and await self._repository.by_email(
+            email
+        ):
             raise ConflictError("An account already exists for this email address.")
         try:
             await self._repository.create_user(
                 email, await asyncio.to_thread(self._passwords.hash, password)
             )
+            # Recorded once the flush has cleared the unique index but before the
+            # commit: a phantom entry after a rollback only costs a later lookup,
+            # whereas a lost entry would let the filter answer "available" for a
+            # registered address.
+            await self._emails.remember(email)
             await self._send_code(email, "verify")
             await self._repository.commit()
         except IntegrityError as exc:
             await self._repository.rollback()
+            # The database just proved the address is taken, so repair the filter.
+            await self._emails.remember(email)
             raise ConflictError(
                 "An account already exists for this email address."
             ) from exc
@@ -181,10 +203,7 @@ class AuthService:
 
     @staticmethod
     def _email_address(value: str) -> str:
-        email = value.strip().lower()
-        if "@" not in email or len(email) > 320:
-            raise BadRequestError("A valid email address is required.")
-        return email
+        return normalize_email(value)
 
     @staticmethod
     def _check_password(value: str) -> None:

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.features.auth.auth_model import OAuthIdentity, User
@@ -18,6 +19,17 @@ class AuthRepository:
             User | None,
             await self._session.scalar(select(User).where(User.email == email)),
         )
+
+    async def iter_email_batches(self, batch_size: int) -> AsyncIterator[Sequence[str]]:
+        """Stream every registered address without materializing the table."""
+        result = await self._session.stream_scalars(
+            select(User.email).execution_options(yield_per=batch_size)
+        )
+        async for batch in result.partitions(batch_size):
+            yield batch
+
+    async def count_users(self) -> int:
+        return (await self._session.scalar(select(func.count()).select_from(User))) or 0
 
     async def by_id(self, user_id: UUID) -> User | None:
         return await self._session.get(User, user_id)

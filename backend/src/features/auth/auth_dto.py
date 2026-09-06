@@ -30,6 +30,10 @@ class OAuthTokenRequest(BaseModel):
     nonce: str = Field(max_length=256)
 
 
+class EmailAvailabilityResponse(BaseModel):
+    available: bool
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

@@ -5,6 +5,7 @@ from src.shared.exceptions.application_error import (
     ForbiddenError,
     NotFoundError,
     ServiceUnavailableError,
+    TooManyRequestsError,
     UnauthorizedError,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "ForbiddenError",
     "NotFoundError",
     "ServiceUnavailableError",
+    "TooManyRequestsError",
     "UnauthorizedError",
 ]

@@ -4,9 +4,14 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from redis.asyncio import Redis
 from sqlalchemy import text
 
 from src.application.environment.environment_manager import Settings
+from src.features.auth.availability.email_filter import (
+    EMAIL_FILTER_KEY,
+    EMAIL_FILTER_META_KEY,
+)
 from src.main import create_app
 
 
@@ -152,3 +157,112 @@ def test_auth_security_and_revocation_flows_against_containers(
             path=integration_settings.auth_refresh_cookie_path,
         )
         assert client.post("/auth/refresh").status_code == 401
+
+
+def filter_client(settings: Settings) -> Redis:
+    return Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+@pytest.mark.integration
+async def test_signup_populates_the_email_filter_against_containers(
+    integration_settings: Settings,
+) -> None:
+    email = f"auth-filter-{uuid4().hex}@example.com"
+    redis = filter_client(integration_settings)
+    try:
+        with TestClient(create_app(integration_settings)) as client:
+            assert (
+                client.post(
+                    "/auth/signup",
+                    json={"email": email, "password": "a-secure-password"},
+                ).status_code
+                == 202
+            )
+        assert await redis.cf().exists(EMAIL_FILTER_KEY, email) == 1
+    finally:
+        await redis.aclose()
+
+
+@pytest.mark.integration
+def test_email_availability_endpoint_against_containers(
+    integration_settings: Settings,
+) -> None:
+    email = f"auth-available-{uuid4().hex}@example.com"
+    with TestClient(create_app(integration_settings)) as client:
+        before = client.post("/auth/email/availability", json={"email": email})
+        assert before.status_code == 200
+        assert before.json() == {"available": True}
+        assert before.headers["Cache-Control"] == "no-store"
+
+        client.post(
+            "/auth/signup", json={"email": email, "password": "a-secure-password"}
+        )
+
+        after = client.post("/auth/email/availability", json={"email": email})
+        assert after.json() == {"available": False}
+
+
+@pytest.mark.integration
+def test_email_availability_endpoint_throttles_repeated_requests(
+    integration_settings: Settings,
+) -> None:
+    settings = integration_settings.model_copy(
+        update={"auth_availability_limit": 3, "auth_jwt_secret": uuid4().hex * 2}
+    )
+    email = f"auth-throttle-{uuid4().hex}@example.com"
+    with TestClient(create_app(settings)) as client:
+        codes = [
+            client.post("/auth/email/availability", json={"email": email}).status_code
+            for _ in range(4)
+        ]
+
+    assert codes[:3] == [200, 200, 200]
+    assert codes[3] == 429
+
+
+@pytest.mark.integration
+async def test_startup_rebuilds_the_filter_after_redis_is_flushed(
+    integration_settings: Settings,
+) -> None:
+    email = f"auth-rebuild-{uuid4().hex}@example.com"
+    redis = filter_client(integration_settings)
+    try:
+        with TestClient(create_app(integration_settings)) as client:
+            client.post(
+                "/auth/signup", json={"email": email, "password": "a-secure-password"}
+            )
+        await redis.flushall()
+
+        # A fresh lifespan runs the warmer, which rebuilds from the database.
+        with TestClient(create_app(integration_settings)) as client:
+            assert await redis.cf().exists(EMAIL_FILTER_KEY, email) == 1
+            assert await redis.get(EMAIL_FILTER_META_KEY) is not None
+
+            duplicate = client.post(
+                "/auth/signup", json={"email": email, "password": "a-secure-password"}
+            )
+            assert duplicate.status_code == 409
+            assert duplicate.json()["error"]["code"] == "conflict"
+    finally:
+        await redis.aclose()
+
+
+@pytest.mark.integration
+def test_signup_still_succeeds_when_the_filter_is_disabled(
+    integration_settings: Settings,
+) -> None:
+    settings = integration_settings.model_copy(
+        update={"auth_email_filter_enabled": False}
+    )
+    email = f"auth-nofilter-{uuid4().hex}@example.com"
+    with TestClient(create_app(settings)) as client:
+        assert (
+            client.post(
+                "/auth/signup", json={"email": email, "password": "a-secure-password"}
+            ).status_code
+            == 202
+        )
+        duplicate = client.post(
+            "/auth/signup", json={"email": email, "password": "a-secure-password"}
+        )
+        assert duplicate.status_code == 409

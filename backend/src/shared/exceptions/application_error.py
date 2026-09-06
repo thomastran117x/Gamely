@@ -40,6 +40,12 @@ class ConflictError(ApplicationError):
     message = "The request conflicts with the current resource state."
 
 
+class TooManyRequestsError(ApplicationError):
+    status_code = 429
+    code = "too_many_requests"
+    message = "Too many requests. Please try again later."
+
+
 class ServiceUnavailableError(ApplicationError):
     status_code = 503
     code = "service_unavailable"

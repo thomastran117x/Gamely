@@ -14,13 +14,34 @@ from src.application.environment.environment_manager import Settings
 from src.features.auth.auth_controller import AuthController, get_controller, router
 from src.features.auth.auth_model import User
 from src.features.auth.auth_service import AuthService
+from src.features.auth.availability.availability_service import (
+    EmailAvailabilityService,
+)
 from src.features.auth.oauth.oauth_service import OAuthService
 from src.features.auth.token.token_service import TokenService
-from src.shared.exceptions import UnauthorizedError
+from src.shared.exceptions import TooManyRequestsError, UnauthorizedError
 from src.shared.middlewares import (
     ExceptionHandlingMiddleware,
     register_http_exception_handlers,
 )
+
+
+class FakeAvailabilityService:
+    def __init__(self) -> None:
+        self.available = True
+        self.checked: list[tuple[str, str]] = []
+        self.throttled: list[tuple[str, str, int]] = []
+        self.throttle_error: Exception | None = None
+
+    async def is_available(self, email: str, client_address: str) -> bool:
+        await self.throttle(client_address, "availability", 0)
+        self.checked.append((email, client_address))
+        return self.available
+
+    async def throttle(self, client_address: str, scope: str, limit: int) -> None:
+        self.throttled.append((client_address, scope, limit))
+        if self.throttle_error is not None:
+            raise self.throttle_error
 
 
 class FakeAuthService:
@@ -94,7 +115,13 @@ class FakeOAuthService:
 
 @pytest.fixture
 def auth_routes() -> Generator[
-    tuple[TestClient, FakeAuthService, FakeTokenService, Settings]
+    tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ]
 ]:
     settings = Settings(
         auth_jwt_secret="test-secret-with-at-least-thirty-two-characters",
@@ -102,10 +129,12 @@ def auth_routes() -> Generator[
     )
     auth = FakeAuthService()
     tokens = FakeTokenService(auth.user.id)
+    availability = FakeAvailabilityService()
     controller = AuthController(
         cast(AuthService, auth),
         cast(OAuthService, FakeOAuthService()),
         cast(TokenService, tokens),
+        cast(EmailAvailabilityService, availability),
         settings,
     )
     app = FastAPI()
@@ -114,13 +143,19 @@ def auth_routes() -> Generator[
     app.add_middleware(ExceptionHandlingMiddleware)
     app.dependency_overrides[get_controller] = lambda: controller
     with TestClient(app) as client:
-        yield client, auth, tokens, settings
+        yield client, auth, tokens, settings, availability
 
 
 def test_login_sets_hardened_refresh_cookie(
-    auth_routes: tuple[TestClient, FakeAuthService, FakeTokenService, Settings],
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
 ) -> None:
-    client, _, _, settings = auth_routes
+    client, _, _, settings, _ = auth_routes
 
     response = client.post(
         "/auth/login",
@@ -142,9 +177,15 @@ def test_login_sets_hardened_refresh_cookie(
 
 
 def test_login_failure_uses_safe_error_contract(
-    auth_routes: tuple[TestClient, FakeAuthService, FakeTokenService, Settings],
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
 ) -> None:
-    client, auth, _, _ = auth_routes
+    client, auth, _, _, _ = auth_routes
     auth.login_error = UnauthorizedError("The email address or password is incorrect.")
 
     response = client.post(
@@ -162,9 +203,15 @@ def test_login_failure_uses_safe_error_contract(
 
 
 def test_refresh_requires_cookie(
-    auth_routes: tuple[TestClient, FakeAuthService, FakeTokenService, Settings],
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
 ) -> None:
-    client, _, _, _ = auth_routes
+    client, _, _, _, _ = auth_routes
 
     response = client.post("/auth/refresh")
 
@@ -185,12 +232,18 @@ def test_refresh_requires_cookie(
     ],
 )
 def test_protected_routes_require_bearer_token(
-    auth_routes: tuple[TestClient, FakeAuthService, FakeTokenService, Settings],
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
     method: str,
     path: str,
     json: dict[str, str] | None,
 ) -> None:
-    client, _, _, _ = auth_routes
+    client, _, _, _, _ = auth_routes
 
     response = client.request(method, path, json=json)
 
@@ -216,11 +269,17 @@ def test_protected_routes_require_bearer_token(
     ],
 )
 def test_auth_request_bounds_return_generic_validation_error(
-    auth_routes: tuple[TestClient, FakeAuthService, FakeTokenService, Settings],
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
     path: str,
     body: dict[str, str],
 ) -> None:
-    client, _, _, _ = auth_routes
+    client, _, _, _, _ = auth_routes
 
     response = client.post(path, json=body)
 
@@ -234,9 +293,15 @@ def test_auth_request_bounds_return_generic_validation_error(
 
 
 def test_logout_revokes_current_family_and_clears_cookie(
-    auth_routes: tuple[TestClient, FakeAuthService, FakeTokenService, Settings],
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
 ) -> None:
-    client, _, tokens, settings = auth_routes
+    client, _, tokens, settings, _ = auth_routes
     client.cookies.set(
         settings.auth_refresh_cookie_name,
         "refresh-token",
@@ -252,9 +317,15 @@ def test_logout_revokes_current_family_and_clears_cookie(
 
 
 def test_change_password_revokes_cookie_after_authentication(
-    auth_routes: tuple[TestClient, FakeAuthService, FakeTokenService, Settings],
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
 ) -> None:
-    client, auth, _, _ = auth_routes
+    client, auth, _, _, _ = auth_routes
 
     response = client.post(
         "/auth/change-password",
@@ -270,3 +341,132 @@ def test_change_password_revokes_cookie_after_authentication(
         (auth.user.id, "current-password", "replacement-password")
     ]
     assert "Max-Age=0" in response.headers["set-cookie"]
+
+
+def test_email_availability_returns_only_the_boolean(
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
+) -> None:
+    client, _, _, _, availability = auth_routes
+
+    response = client.post(
+        "/auth/email/availability", json={"email": "fresh@example.com"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"available": True}
+    assert availability.checked == [("fresh@example.com", "testclient")]
+
+
+def test_email_availability_reports_a_taken_address(
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
+) -> None:
+    client, _, _, _, availability = auth_routes
+    availability.available = False
+
+    response = client.post(
+        "/auth/email/availability", json={"email": "user@example.com"}
+    )
+
+    assert response.json() == {"available": False}
+
+
+def test_email_availability_is_not_cacheable(
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
+) -> None:
+    client, _, _, _, _ = auth_routes
+
+    response = client.post(
+        "/auth/email/availability", json={"email": "fresh@example.com"}
+    )
+
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_email_availability_rejects_an_oversized_address(
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
+) -> None:
+    client, _, _, _, _ = auth_routes
+
+    response = client.post("/auth/email/availability", json={"email": "x" * 321})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "scope"),
+    [
+        ("/auth/email/availability", {"email": "a@example.com"}, "availability"),
+        (
+            "/auth/signup",
+            {"email": "a@example.com", "password": "a-secure-password"},
+            "signup",
+        ),
+        ("/auth/forgot-password", {"email": "a@example.com"}, "forgot-password"),
+    ],
+)
+def test_enumerable_routes_are_throttled(
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
+    path: str,
+    body: dict[str, str],
+    scope: str,
+) -> None:
+    client, _, _, _, availability = auth_routes
+    availability.throttle_error = TooManyRequestsError()
+
+    response = client.post(path, json=body)
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "too_many_requests"
+    assert [entry[1] for entry in availability.throttled] == [scope]
+
+
+def test_signup_reports_the_caller_address_to_the_throttle(
+    auth_routes: tuple[
+        TestClient,
+        FakeAuthService,
+        FakeTokenService,
+        Settings,
+        FakeAvailabilityService,
+    ],
+) -> None:
+    client, _, _, settings, availability = auth_routes
+
+    client.post(
+        "/auth/signup",
+        json={"email": "a@example.com", "password": "a-secure-password"},
+    )
+
+    assert availability.throttled == [
+        ("testclient", "signup", settings.auth_signup_limit)
+    ]

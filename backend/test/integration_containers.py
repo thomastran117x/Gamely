@@ -55,7 +55,7 @@ def _postgres_container() -> ManagedPostgresContainer:
 
 
 def _redis_container() -> ManagedContainer:
-    return RedisContainer(image="redis:7.4-alpine")
+    return RedisContainer(image="redis:8-alpine")
 
 
 def _opensearch_container() -> ManagedContainer:

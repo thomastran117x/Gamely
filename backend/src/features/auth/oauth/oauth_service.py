@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from src.application.environment.environment_manager import Settings
 from src.features.auth.auth_model import User
 from src.features.auth.auth_repository import AuthRepository
+from src.features.auth.availability.email_filter import EmailFilter
 from src.features.auth.token.token_service import TokenService
 from src.shared.exceptions import BadRequestError, UnauthorizedError
 
@@ -26,11 +27,13 @@ class OAuthService:
         repository: AuthRepository,
         tokens: TokenService,
         redis: Redis,
+        emails: EmailFilter,
         settings: Settings,
     ) -> None:
         self._repository = repository
         self._tokens = tokens
         self._redis = redis
+        self._emails = emails
         self._settings = settings
 
     async def create_challenge(self, provider: str) -> str:
@@ -77,6 +80,8 @@ class OAuthService:
             existing_user = await self._repository.by_email(email)
             if existing_user is None:
                 user = await self._repository.create_user(email, None, verified=True)
+                # OAuth is a second signup path; without this the filter diverges.
+                await self._emails.remember(email)
             else:
                 user = existing_user
                 if user.email_verified_at is None:

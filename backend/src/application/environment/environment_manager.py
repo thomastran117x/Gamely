@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     auth_refresh_cookie_path: str = "/auth"
     auth_refresh_cookie_secure: bool = True
     auth_refresh_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    auth_email_filter_enabled: bool = True
+    auth_email_filter_capacity: int = Field(default=100_000, ge=1)
+    auth_email_filter_bucket_size: int = Field(default=4, ge=1, le=255)
+    auth_email_filter_expansion: int = Field(default=2, ge=1)
+    auth_email_filter_max_iterations: int = Field(default=20, ge=1)
+    auth_email_filter_rebuild_batch_size: int = Field(default=1000, ge=1)
+    auth_email_filter_rebuild_timeout_seconds: int = Field(default=30, ge=1)
+    auth_email_filter_lock_seconds: int = Field(default=300, ge=1)
+    auth_availability_limit: int = Field(default=20, ge=1)
+    auth_signup_limit: int = Field(default=10, ge=1)
+    auth_throttle_window_seconds: int = Field(default=60, ge=1)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
