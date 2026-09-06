@@ -9,6 +9,7 @@ from src.application.environment.environment_manager import Settings
 from src.features.auth.auth_dto import (
     ChangePasswordRequest,
     CredentialsRequest,
+    EmailAvailabilityResponse,
     EmailRequest,
     OAuthTokenRequest,
     ResetPasswordRequest,
@@ -16,9 +17,13 @@ from src.features.auth.auth_dto import (
     VerifyEmailRequest,
 )
 from src.features.auth.auth_service import AuthService
+from src.features.auth.availability.availability_service import (
+    EmailAvailabilityService,
+)
 from src.features.auth.oauth.oauth_service import OAuthService
 from src.features.auth.token.token_service import TokenService
 from src.shared.exceptions import UnauthorizedError
+from src.shared.requests.client_address import client_address
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,14 +34,33 @@ class AuthController:
         auth: AuthService,
         oauth: OAuthService,
         tokens: TokenService,
+        availability: EmailAvailabilityService,
         settings: Settings,
     ) -> None:
         self._auth = auth
         self._oauth = oauth
         self._tokens = tokens
+        self._availability = availability
         self._settings = settings
 
-    async def signup(self, body: CredentialsRequest) -> dict[str, str]:
+    async def email_available(
+        self, body: EmailRequest, request: Request, response: Response
+    ) -> EmailAvailabilityResponse:
+        response.headers["Cache-Control"] = "no-store"
+        return EmailAvailabilityResponse(
+            available=await self._availability.is_available(
+                body.email, client_address(request)
+            )
+        )
+
+    async def signup(
+        self, body: CredentialsRequest, request: Request
+    ) -> dict[str, str]:
+        # Throttled alongside the availability endpoint: a 409 answers the same
+        # question, so leaving signup open would defeat the other limit.
+        await self._availability.throttle(
+            client_address(request), "signup", self._settings.auth_signup_limit
+        )
         await self._auth.signup(body.email, body.password)
         return {"status": "verification_sent"}
 
@@ -55,7 +79,12 @@ class AuthController:
         await self._auth.send_verification(body.email)
         return {"status": "verification_sent"}
 
-    async def forgot_password(self, body: EmailRequest) -> dict[str, str]:
+    async def forgot_password(
+        self, body: EmailRequest, request: Request
+    ) -> dict[str, str]:
+        await self._availability.throttle(
+            client_address(request), "forgot-password", self._settings.auth_signup_limit
+        )
         await self._auth.forgot_password(body.email)
         return {"status": "reset_sent"}
 
@@ -142,11 +171,23 @@ def get_controller(request: Request) -> AuthController:
     return cast(AuthController, request.state.service_scope.get(AuthController))
 
 
+@router.post("/email/availability", response_model=EmailAvailabilityResponse)
+async def email_available(
+    body: EmailRequest,
+    request: Request,
+    response: Response,
+    controller: AuthController = Depends(get_controller),
+) -> EmailAvailabilityResponse:
+    return await controller.email_available(body, request, response)
+
+
 @router.post("/signup", status_code=202)
 async def signup(
-    body: CredentialsRequest, controller: AuthController = Depends(get_controller)
+    body: CredentialsRequest,
+    request: Request,
+    controller: AuthController = Depends(get_controller),
 ) -> dict[str, str]:
-    return await controller.signup(body)
+    return await controller.signup(body, request)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -174,9 +215,11 @@ async def resend_verification(
 
 @router.post("/forgot-password", status_code=202)
 async def forgot_password(
-    body: EmailRequest, controller: AuthController = Depends(get_controller)
+    body: EmailRequest,
+    request: Request,
+    controller: AuthController = Depends(get_controller),
 ) -> dict[str, str]:
-    return await controller.forgot_password(body)
+    return await controller.forgot_password(body, request)
 
 
 @router.post("/reset-password")

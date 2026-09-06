@@ -11,6 +11,8 @@ import jwt
 from src.application.environment.environment_manager import Settings
 from src.features.auth.auth_service import AuthService
 from src.features.auth.token.token_service import TokenService
+from redis.exceptions import ResponseError
+
 from src.shared.exceptions import UnauthorizedError
 
 
@@ -28,39 +30,155 @@ def token_service(redis: FakeRedis | None = None) -> tuple[TokenService, FakeRed
     )
 
 
+class FakePipelineCuckoo:
+    def __init__(self, pipeline: FakePipeline) -> None:
+        self._pipeline = pipeline
+
+    def exists(self, *args: Any, **kwargs: Any) -> None:
+        self._pipeline.record("cf.exists", args, kwargs)
+
+    def insert(self, *args: Any, **kwargs: Any) -> None:
+        self._pipeline.record("cf.insert", args, kwargs)
+
+
 class FakePipeline:
     def __init__(self, redis: FakeRedis) -> None:
         self._redis = redis
         self._operations: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
+    def record(
+        self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
+        self._operations.append((method, args, kwargs))
+
+    def cf(self) -> FakePipelineCuckoo:
+        return FakePipelineCuckoo(self)
+
     def set(self, *args: Any, **kwargs: Any) -> None:
-        self._operations.append(("set", args, kwargs))
+        self.record("set", args, kwargs)
+
+    def get(self, *args: Any, **kwargs: Any) -> None:
+        self.record("get", args, kwargs)
 
     def sadd(self, *args: Any, **kwargs: Any) -> None:
-        self._operations.append(("sadd", args, kwargs))
+        self.record("sadd", args, kwargs)
 
     def srem(self, *args: Any, **kwargs: Any) -> None:
-        self._operations.append(("srem", args, kwargs))
+        self.record("srem", args, kwargs)
 
     def expire(self, *args: Any, **kwargs: Any) -> None:
-        self._operations.append(("expire", args, kwargs))
+        self.record("expire", args, kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> None:
-        self._operations.append(("delete", args, kwargs))
+        self.record("delete", args, kwargs)
 
-    async def execute(self) -> None:
+    async def execute(self) -> list[Any]:
+        results = []
         for method, args, kwargs in self._operations:
-            await getattr(self._redis, method)(*args, **kwargs)
+            target: Any = self._redis
+            if method.startswith("cf."):
+                target, method = self._redis.cf(), method[3:]
+            results.append(await getattr(target, method)(*args, **kwargs))
+        return results
+
+
+class FakeCuckoo:
+    """In-memory stand-in for the CF.* command set."""
+
+    def __init__(self, redis: FakeRedis) -> None:
+        self._redis = redis
+
+    async def create(
+        self,
+        key: str,
+        capacity: int,
+        expansion: int | None = None,
+        bucket_size: int | None = None,
+        max_iterations: int | None = None,
+    ) -> bool:
+        self._redis.raise_filter_error()
+        if key in self._redis.filters:
+            raise ResponseError("ERR item exists")
+        self._redis.filters[key] = builtin_set()
+        self._redis.reserved[key] = (capacity, bucket_size, expansion, max_iterations)
+        return True
+
+    async def insert(
+        self,
+        key: str,
+        items: list[str],
+        capacity: int | None = None,
+        nocreate: bool | None = None,
+    ) -> list[int]:
+        self._redis.raise_filter_error()
+        stored = self._redis.filters.setdefault(key, builtin_set())
+        self._redis.reserved.setdefault(key, (capacity, None, None, None))
+        added = []
+        for item in items:
+            added.append(0 if item in stored else 1)
+            stored.add(item)
+            self._redis.inserted[key] = self._redis.inserted.get(key, 0) + 1
+        return added
+
+    async def exists(self, key: str, item: str) -> int:
+        self._redis.raise_filter_error()
+        stored = self._redis.filters.get(key, builtin_set())
+        return 1 if item in stored or item in self._redis.false_positives else 0
+
+    async def delete(self, key: str, item: str) -> int:
+        self._redis.raise_filter_error()
+        stored = self._redis.filters.get(key, builtin_set())
+        if item not in stored:
+            return 0
+        stored.discard(item)
+        self._redis.deleted[key] = self._redis.deleted.get(key, 0) + 1
+        return 1
+
+    async def info(self, key: str) -> dict[str, int]:
+        self._redis.raise_filter_error()
+        if key not in self._redis.filters:
+            raise ResponseError("ERR not found")
+        return {
+            "Number of items inserted": self._redis.inserted.get(key, 0),
+            "Number of items deleted": self._redis.deleted.get(key, 0),
+        }
 
 
 class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.sets: dict[str, builtin_set[str]] = {}
+        self.filters: dict[str, builtin_set[str]] = {}
+        self.reserved: dict[str, tuple[int | None, ...]] = {}
+        self.inserted: dict[str, int] = {}
+        self.deleted: dict[str, int] = {}
+        # Reported by CF.EXISTS for addresses that were never added, so the
+        # false-positive fall-through can be tested without probabilistic hashing.
+        self.false_positives: builtin_set[str] = builtin_set()
+        # Applies to the CF.* path only, leaving plain key commands working.
+        self.filter_error: Exception | None = None
 
-    async def eval(
-        self, _: str, __: int, refresh_key: str, reuse_key: str, ___: int
-    ) -> list[str]:
+    def raise_filter_error(self) -> None:
+        if self.filter_error is not None:
+            raise self.filter_error
+
+    def cf(self) -> FakeCuckoo:
+        return FakeCuckoo(self)
+
+    async def eval(self, script: str, _: int, *args: Any) -> Any:
+        if "rotated" not in script and "INCR" not in script:
+            # Compare-and-delete lock release.
+            key, token = str(args[0]), str(args[1])
+            if self.values.get(key) != token:
+                return 0
+            return await self.delete(key)
+        if "INCR" in script:
+            key, window = str(args[0]), args[1]
+            hits = await self.incr(key)
+            if hits == 1:
+                await self.expire(key, window)
+            return hits
+        refresh_key, reuse_key = str(args[0]), str(args[1])
         session = self.values.get(refresh_key)
         if session is not None:
             await self.delete(refresh_key)
@@ -69,7 +187,19 @@ class FakeRedis:
         reused_session = self.values.pop(reuse_key, None)
         return ["reused", reused_session] if reused_session else ["missing", ""]
 
-    def pipeline(self) -> FakePipeline:
+    async def incr(self, key: str) -> int:
+        hits = int(self.values.get(key, "0")) + 1
+        self.values[key] = str(hits)
+        return hits
+
+    async def exists(self, *keys: str) -> int:
+        return sum(
+            1
+            for key in keys
+            if key in self.values or key in self.sets or key in self.filters
+        )
+
+    def pipeline(self, transaction: bool = True) -> FakePipeline:
         return FakePipeline(self)
 
     async def set(self, key: str, value: str, **kwargs: Any) -> bool:
@@ -88,6 +218,11 @@ class FakeRedis:
                 deleted += 1
             if self.sets.pop(key, None) is not None:
                 deleted += 1
+            if self.filters.pop(key, None) is not None:
+                self.reserved.pop(key, None)
+                self.inserted.pop(key, None)
+                self.deleted.pop(key, None)
+                deleted += 1
         return deleted
 
     async def sadd(self, key: str, value: str) -> None:
@@ -99,11 +234,20 @@ class FakeRedis:
     async def smembers(self, key: str) -> builtin_set[str]:
         return builtin_set(self.sets.get(key, builtin_set()))
 
-    async def expire(self, _: str, __: timedelta) -> None:
+    async def expire(self, _: str, __: timedelta | int) -> None:
         return None
 
     async def ttl(self, _: str) -> int:
         return 60
+
+
+def mark_filter_ready(redis: FakeRedis, settings: Settings) -> None:
+    """Put the fake in the state the startup warmer leaves behind."""
+    from src.features.auth.availability.email_filter import build_email_filter
+
+    email_filter = build_email_filter(redis, settings)  # type: ignore[arg-type]
+    redis.values[email_filter.meta_key] = email_filter.fingerprint
+    redis.filters.setdefault(email_filter.key, builtin_set())
 
 
 @pytest.mark.asyncio

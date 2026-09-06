@@ -16,9 +16,15 @@ from src.application.ioc import ServiceCollection, ServiceProvider, ServiceScope
 from src.features.auth.auth_controller import AuthController, router as auth_router
 from src.features.auth.auth_repository import AuthRepository
 from src.features.auth.auth_service import AuthService
+from src.features.auth.availability.availability_service import (
+    EmailAvailabilityService,
+)
+from src.features.auth.availability.email_filter import EmailFilter
+from src.features.auth.availability.email_filter_warmer import EmailFilterWarmer
 from src.features.auth.oauth.oauth_service import OAuthService
 from src.features.auth.token.token_service import TokenService
 from src.infrastructure.email import EmailPublisher
+from src.infrastructure.redis import RedisRateLimiter
 from src.infrastructure.services import InfrastructureServices
 from src.shared.middlewares import (
     ExceptionHandlingMiddleware,
@@ -58,6 +64,38 @@ def build_container(
             cast(InfrastructureServices, resolver.get(ApplicationServices)).rabbitmq
         ),
     )
+    services.add_transient(
+        EmailFilter,
+        lambda resolver: EmailFilter(
+            cast(InfrastructureServices, resolver.get(ApplicationServices)).redis,
+            resolver.get(Settings),
+        ),
+    )
+    services.add_transient(
+        RedisRateLimiter,
+        lambda resolver: RedisRateLimiter(
+            cast(InfrastructureServices, resolver.get(ApplicationServices)).redis
+        ),
+    )
+    services.add_transient(
+        EmailFilterWarmer,
+        lambda resolver: EmailFilterWarmer(
+            cast(InfrastructureServices, resolver.get(ApplicationServices)).redis,
+            cast(
+                InfrastructureServices, resolver.get(ApplicationServices)
+            ).session_factory,
+            resolver.get(Settings),
+        ),
+    )
+    services.add_scoped(
+        EmailAvailabilityService,
+        lambda resolver: EmailAvailabilityService(
+            resolver.get(AuthRepository),
+            resolver.get(EmailFilter),
+            resolver.get(RedisRateLimiter),
+            resolver.get(Settings),
+        ),
+    )
     services.add_scoped(
         AuthService,
         lambda resolver: AuthService(
@@ -65,6 +103,7 @@ def build_container(
             resolver.get(TokenService),
             cast(InfrastructureServices, resolver.get(ApplicationServices)).redis,
             resolver.get(EmailPublisher),
+            resolver.get(EmailFilter),
             resolver.get(Settings),
         ),
     )
@@ -74,6 +113,7 @@ def build_container(
             resolver.get(AuthRepository),
             resolver.get(TokenService),
             cast(InfrastructureServices, resolver.get(ApplicationServices)).redis,
+            resolver.get(EmailFilter),
             resolver.get(Settings),
         ),
     )
@@ -83,6 +123,7 @@ def build_container(
             resolver.get(AuthService),
             resolver.get(OAuthService),
             resolver.get(TokenService),
+            resolver.get(EmailAvailabilityService),
             resolver.get(Settings),
         ),
     )
@@ -111,6 +152,10 @@ def create_app(
         services = container.get(ApplicationServices)
         app.state.container = container
         await services.connect()
+        # Guarded because test doubles for ApplicationServices own no Redis client
+        # or session factory. warm() never raises; the filter is optional.
+        if isinstance(services, InfrastructureServices):
+            await container.get(EmailFilterWarmer).warm()
         try:
             yield
         finally:

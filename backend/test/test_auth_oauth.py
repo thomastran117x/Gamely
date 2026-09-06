@@ -10,9 +10,11 @@ import pytest
 from src.application.environment.environment_manager import Settings
 from src.features.auth.auth_model import OAuthIdentity, User
 from src.features.auth.auth_repository import AuthRepository
+from src.features.auth.availability.email_filter import EmailFilter
 from src.features.auth.oauth.oauth_service import OAuthService
 from src.features.auth.token.token_service import TokenService
 from src.shared.exceptions import BadRequestError, UnauthorizedError
+from test.test_auth_unit import FakeRedis
 
 
 class FakeOAuthRedis:
@@ -83,18 +85,19 @@ def make_service(
 ) -> tuple[OAuthService, FakeOAuthRedis, FakeOAuthRepository]:
     redis = FakeOAuthRedis()
     repository = repository or FakeOAuthRepository()
+    resolved = settings or Settings(
+        auth_jwt_secret="test-secret-with-at-least-thirty-two-characters",
+        google_client_id="google-client",
+        apple_client_id="apple-client",
+        microsoft_client_id="microsoft-client",
+        microsoft_tenant_id="tenant-id",
+    )
     service = OAuthService(
         cast(AuthRepository, repository),
         cast(TokenService, FakeOAuthTokens()),
         redis,  # type: ignore[arg-type]
-        settings
-        or Settings(
-            auth_jwt_secret="test-secret-with-at-least-thirty-two-characters",
-            google_client_id="google-client",
-            apple_client_id="apple-client",
-            microsoft_client_id="microsoft-client",
-            microsoft_tenant_id="tenant-id",
-        ),
+        EmailFilter(FakeRedis(), resolved),  # type: ignore[arg-type]
+        resolved,
     )
     return service, redis, repository
 
