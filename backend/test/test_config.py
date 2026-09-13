@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -25,6 +26,13 @@ def write_layer(directory: Path, name: str, body: str) -> None:
     (directory / f"{name}.yml").write_text(body, encoding="utf-8")
 
 
+def settings_from(env_file: Path | None, **overrides: Any) -> Settings:
+    """Settings reading ``env_file`` in place of the repository-root .env."""
+    # pydantic-settings accepts _env_file at runtime, but it is not part of the
+    # constructor signature mypy derives from the model fields.
+    return Settings(_env_file=env_file, **overrides)  # type: ignore[call-arg]
+
+
 @pytest.mark.parametrize("stage", ["dev", "test", "prod"])
 def test_every_shipped_stage_produces_valid_settings(
     stage: str, monkeypatch: pytest.MonkeyPatch
@@ -40,7 +48,8 @@ def test_every_shipped_stage_produces_valid_settings(
     # prod.yml composes public URLs from this.
     monkeypatch.setenv("APP_DOMAIN", "games.example")
 
-    assert Settings().app_env == stage
+    # No env file, so a developer's root .env stays out of this check.
+    assert settings_from(None).app_env == stage
 
 
 def test_suite_runs_under_the_test_stage() -> None:
@@ -263,3 +272,99 @@ def test_an_unknown_nested_key_is_reported_by_its_path(
 
     with pytest.raises(ConfigFileError, match=r"auth\.jwt\.isseur"):
         Settings()
+
+
+def write_dotenv(directory: Path, body: str) -> Path:
+    env_file = directory / "stage.env"
+    env_file.write_text(body, encoding="utf-8")
+    return env_file
+
+
+def test_stage_in_dotenv_selects_the_matching_layer(
+    config_layers: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: the stage used to be read from os.environ alone, so APP_ENV in
+    # .env reported prod while dev.yml's insecure cookies were loaded.
+    monkeypatch.delenv("APP_ENV")
+    write_layer(config_layers, "default", f"auth_jwt_secret: {JWT_SECRET}\n")
+    write_layer(config_layers, "dev", "app_name: from-dev\n")
+    write_layer(config_layers, "prod", "app_name: from-prod\n")
+    env_file = write_dotenv(config_layers, "APP_ENV=prod\n")
+
+    settings = settings_from(env_file)
+
+    assert settings.app_env == "prod"
+    assert settings.app_name == "from-prod"
+
+
+def test_process_stage_outranks_dotenv_stage(
+    config_layers: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    write_layer(config_layers, "default", f"auth_jwt_secret: {JWT_SECRET}\n")
+    write_layer(config_layers, "dev", "app_name: from-dev\n")
+    write_layer(config_layers, "prod", "app_name: from-prod\n")
+    env_file = write_dotenv(config_layers, "APP_ENV=prod\n")
+
+    settings = settings_from(env_file)
+
+    assert settings.app_env == "dev"
+    assert settings.app_name == "from-dev"
+
+
+def test_constructor_stage_outranks_process_and_dotenv(
+    config_layers: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "prod")
+    write_layer(config_layers, "default", f"auth_jwt_secret: {JWT_SECRET}\n")
+    write_layer(config_layers, "dev", "app_name: from-dev\n")
+    env_file = write_dotenv(config_layers, "APP_ENV=prod\n")
+
+    settings = settings_from(env_file, app_env="dev")
+
+    assert settings.app_env == "dev"
+    assert settings.app_name == "from-dev"
+
+
+def test_placeholders_read_the_dotenv_file(
+    config_layers: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APP_ENV")
+    monkeypatch.delenv("APP_DOMAIN", raising=False)
+    write_layer(
+        config_layers,
+        "default",
+        f'auth_jwt_secret: {JWT_SECRET}\ncors_origins: "https://${{APP_DOMAIN}}"\n',
+    )
+    env_file = write_dotenv(config_layers, "APP_DOMAIN=from-dotenv.example\n")
+
+    assert settings_from(env_file).cors_origin_list == ["https://from-dotenv.example"]
+
+
+def test_process_environment_outranks_dotenv_for_placeholders(
+    config_layers: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APP_ENV")
+    monkeypatch.setenv("APP_DOMAIN", "from-process.example")
+    write_layer(
+        config_layers,
+        "default",
+        f'auth_jwt_secret: {JWT_SECRET}\ncors_origins: "https://${{APP_DOMAIN}}"\n',
+    )
+    env_file = write_dotenv(config_layers, "APP_DOMAIN=from-dotenv.example\n")
+
+    assert settings_from(env_file).cors_origin_list == ["https://from-process.example"]
+
+
+def test_placeholders_ignore_dotenv_under_the_test_stage(
+    config_layers: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APP_DOMAIN", raising=False)
+    write_layer(
+        config_layers,
+        "default",
+        f'auth_jwt_secret: {JWT_SECRET}\napp_name: "${{APP_DOMAIN:-unseen}}"\n',
+    )
+    env_file = write_dotenv(config_layers, "APP_DOMAIN=leaked.example\n")
+
+    assert settings_from(env_file).app_name == "unseen"

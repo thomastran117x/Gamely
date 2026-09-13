@@ -5,7 +5,7 @@
 # the OS environment already outranks this file.
 
 cors:
-  # Set APP_DOMAIN in the deployment environment. Because the placeholder is
+  # Set APP_DOMAIN in the deployment environment or the root .env. Because the placeholder is
   # embedded in a longer string, an unset APP_DOMAIN fails startup rather than
   # silently falling back to default.yml's localhost origins.
   origins: "https://${APP_DOMAIN},https://www.${APP_DOMAIN}"

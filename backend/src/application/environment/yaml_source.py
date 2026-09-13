@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -25,17 +25,21 @@ class _Unresolved:
     """Marks a whole-value ${VAR} that had neither a value nor a fallback."""
 
 
-def _resolve(match: re.Match[str]) -> str | None:
+def _resolve(match: re.Match[str], env: Mapping[str, str]) -> str | None:
     """Substitution for one placeholder, or None when nothing supplies it."""
     name, fallback = match.group(1), match.group(2)
-    value = os.environ.get(name)
+    value = env.get(name)
     if value is not None:
         return value
     return fallback
 
 
 def _interpolate(
-    raw: str, origin: str, key: str, allow_absent: bool = True
+    raw: str,
+    origin: str,
+    key: str,
+    env: Mapping[str, str],
+    allow_absent: bool = True,
 ) -> str | type[_Unresolved]:
     """Expand ${VAR} placeholders in one YAML scalar.
 
@@ -50,13 +54,13 @@ def _interpolate(
 
     whole = _PLACEHOLDER.fullmatch(text)
     if whole is not None and allow_absent:
-        resolved = _resolve(whole)
+        resolved = _resolve(whole, env)
         if resolved is None:
             return _Unresolved
         return resolved.replace(_ESCAPE_MARKER, "${")
 
     def replace(match: re.Match[str]) -> str:
-        value = _resolve(match)
+        value = _resolve(match, env)
         if value is None:
             raise ConfigFileError(
                 f"{origin}: {key} embeds ${{{match.group(1)}}}, which is unset. "
@@ -67,15 +71,15 @@ def _interpolate(
     return _PLACEHOLDER.sub(replace, text).replace(_ESCAPE_MARKER, "${")
 
 
-def _expand(value: Any, origin: str, key: str) -> Any:
+def _expand(value: Any, origin: str, key: str, env: Mapping[str, str]) -> Any:
     """Interpolate a leaf value, recursing into sequences."""
     if isinstance(value, str):
-        return _interpolate(value, origin, key)
+        return _interpolate(value, origin, key, env)
     if isinstance(value, list):
         # A sequence element has no key of its own to leave absent, so an
         # unset placeholder there is always an error.
         return [
-            _interpolate(item, origin, key, allow_absent=False)
+            _interpolate(item, origin, key, env, allow_absent=False)
             if isinstance(item, str)
             else item
             for item in value
@@ -112,7 +116,9 @@ def _flatten(
         out[flat] = (dotted, value)
 
 
-def load_layer(path: Path, field_names: frozenset[str]) -> dict[str, Any]:
+def load_layer(
+    path: Path, field_names: frozenset[str], env: Mapping[str, str]
+) -> dict[str, Any]:
     """Read one YAML layer, keyed by settings field name.
 
     A missing file is an empty layer so that callers can always list every
@@ -144,7 +150,7 @@ def load_layer(path: Path, field_names: frozenset[str]) -> dict[str, Any]:
         if name not in field_names:
             unknown.append(dotted)
             continue
-        resolved = _expand(value, path.name, dotted)
+        resolved = _expand(value, path.name, dotted, env)
         if resolved is _Unresolved:
             # Leave the key absent so a lower layer or the field default
             # applies. A genuinely required value still fails validation.
@@ -159,13 +165,16 @@ class YamlSettingsSource(PydanticBaseSettingsSource):
     """Settings source backed by a stack of YAML files."""
 
     def __init__(
-        self, settings_cls: type[BaseSettings], paths: tuple[Path, ...]
+        self,
+        settings_cls: type[BaseSettings],
+        paths: tuple[Path, ...],
+        env: Mapping[str, str],
     ) -> None:
         super().__init__(settings_cls)
         field_names = frozenset(settings_cls.model_fields)
         merged: dict[str, Any] = {}
         for path in paths:  # ordered lowest precedence first
-            merged.update(load_layer(path, field_names))
+            merged.update(load_layer(path, field_names, env))
         self._data = merged
 
     def get_field_value(
