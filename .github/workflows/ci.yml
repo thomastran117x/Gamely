@@ -56,6 +56,8 @@ jobs:
 
   backend-unit:
     runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
     defaults:
       run:
         working-directory: backend
@@ -96,7 +98,7 @@ jobs:
   backend-integration:
     runs-on: ubuntu-latest
     env:
-      AUTH_JWT_SECRET: ci-only-auth-secret-at-least-32-characters
+      APP_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

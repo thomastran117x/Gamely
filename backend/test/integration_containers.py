@@ -17,7 +17,6 @@ from src.application.environment.environment_manager import Settings
 
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
-_AUTH_JWT_SECRET = "test-secret-with-at-least-thirty-two-characters"
 
 
 class ManagedContainer(Protocol):
@@ -121,7 +120,6 @@ def integration_container_stack(
                 f"amqp://games:games@{rabbitmq.get_container_host_ip()}:"
                 f"{rabbitmq.get_exposed_port(5672)}/%2F"
             ),
-            auth_jwt_secret=_AUTH_JWT_SECRET,
             auth_refresh_cookie_secure=False,
         )
         migrate(settings.database_url)

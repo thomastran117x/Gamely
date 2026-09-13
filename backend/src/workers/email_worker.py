@@ -93,7 +93,7 @@ async def handle_message(
 
 
 async def main() -> None:
-    settings = Settings()  # type: ignore[call-arg]
+    settings = Settings()
     connection = await connect_rabbitmq(settings.rabbitmq_url)
     channel = await connection.channel()
     await channel.set_qos(prefetch_count=settings.email_worker_concurrency)

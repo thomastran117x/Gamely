@@ -5,6 +5,7 @@
 - `frontend/` is the Angular 20 SSR application.
 - `backend/` is the FastAPI application, managed with `uv`.
 - `backend/src/application/` contains application configuration, contracts, and the IoC container.
+- `backend/config/` contains the layered YAML settings files read by that configuration code.
 - `backend/src/infrastructure/` contains integrations separated by service (`database`, `redis`, `opensearch`, `rabbitmq`, and `s3`).
 - `backend/src/features/` contains feature-specific controllers, services, repositories, and models.
 - `backend/src/shared/` contains cross-cutting middleware, request/response helpers, utilities, and safe exception types.
@@ -40,5 +41,16 @@ Keep feature code out of `shared` and infrastructure-specific code out of `appli
 ## Compose and configuration
 
 - Host ports are configurable via `FRONTEND_PORT` and `BACKEND_PORT`; do not change container ports without a reason.
-- Keep new configuration environment-driven and document defaults in root `.env.example`.
+- Non-secret tunables belong in `backend/config/default.yml`, with per-stage overrides in
+  `backend/config/{dev,test,prod}.yml`. Root `.env` holds only secrets and credential-bearing
+  connection URLs; document new ones in `.env.example`.
+- The active stage is `app_env` (`dev`, `test`, or `prod`; defaults to `dev`). It resolves with the
+  same precedence as every other setting and is then pinned, so the reported stage always matches
+  the loaded layer. Precedence, highest first: constructor kwargs, OS environment, root `.env`,
+  `<APP_ENV>.yml`, `default.yml`, field defaults. Under `APP_ENV=test` the `.env` layer is skipped
+  so the suite stays hermetic.
+- Unknown keys in a YAML layer are a startup error, unlike the `.env` layer. YAML strings support
+  `${VAR}` and `${VAR:-fallback}`, resolved against the process environment and then the root `.env`
+  (not under `APP_ENV=test`). An unset bare `${VAR}` drops the key so a lower layer applies, while an
+  unset `${VAR}` embedded in a longer value raises.
 - AWS S3 is external: never add an S3 emulator unless requirements change.

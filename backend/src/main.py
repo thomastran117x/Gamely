@@ -144,7 +144,7 @@ def create_app(
         [Settings], ApplicationServices
     ] = InfrastructureServices,
 ) -> FastAPI:
-    app_settings = settings or Settings()  # type: ignore[call-arg]
+    app_settings = settings or Settings()
     container = build_container(app_settings, services_factory)
 
     @asynccontextmanager

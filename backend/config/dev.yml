@@ -1,0 +1,15 @@
+# Local development overrides, applied on top of default.yml.
+# Selected by APP_ENV=dev, which is also the default when APP_ENV is unset.
+
+auth:
+  # Don't rate-limit a developer hammering the signup form.
+  availability_limit: 1000
+  signup_limit: 1000
+
+  refresh_cookie:
+    # http://localhost has no TLS, so a Secure cookie would never be stored.
+    secure: false
+
+  email_filter:
+    # A smaller filter rebuilds instantly against a near-empty local database.
+    capacity: 10000
