@@ -1,0 +1,22 @@
+# Production overrides, applied on top of default.yml. Selected by APP_ENV=prod.
+#
+# Secrets never live here. Use ${VAR} to compose one deployment-supplied value
+# into several settings; a plain ${VAR} passthrough would be redundant because
+# the OS environment already outranks this file.
+
+cors:
+  # Set APP_DOMAIN in the deployment environment. Because the placeholder is
+  # embedded in a longer string, an unset APP_DOMAIN fails startup rather than
+  # silently falling back to default.yml's localhost origins.
+  origins: "https://${APP_DOMAIN},https://www.${APP_DOMAIN}"
+
+auth:
+  refresh_cookie:
+    # A bare placeholder is optional: unset APP_DOMAIN leaves this absent, so
+    # default.yml applies and the cookie stays host-only.
+    domain: "${APP_DOMAIN}"
+    secure: true
+    samesite: lax
+
+  email_filter:
+    enabled: true

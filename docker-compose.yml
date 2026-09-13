@@ -8,6 +8,7 @@ services:
       - path: ./.env
         required: false
     environment:
+      APP_ENV: ${APP_ENV:-dev}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://games:games@postgres:5432/games}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       OPENSEARCH_URL: ${OPENSEARCH_URL:-http://opensearch:9200}
@@ -17,7 +18,6 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       S3_BUCKET: ${S3_BUCKET:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3040,http://127.0.0.1:3040}
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,14 +108,11 @@ services:
       - path: ./.env
         required: false
     environment:
+      APP_ENV: ${APP_ENV:-dev}
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://games:games@rabbitmq:5672/}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
-      EMAIL_WORKER_CONCURRENCY: ${EMAIL_WORKER_CONCURRENCY:-10}
     depends_on:
       rabbitmq:
         condition: service_healthy

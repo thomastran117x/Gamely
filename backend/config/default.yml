@@ -1,0 +1,82 @@
+# Stage-agnostic backend defaults.
+#
+# These are non-secret tunables. Secrets and credential-bearing connection URLs
+# belong in the repository-root .env (see .env.example), which overrides this
+# file. Precedence, highest first:
+#
+#   constructor kwargs > OS environment > root .env > <APP_ENV>.yml > this file
+#
+# Keys are nested only to group related settings. Each leaf flattens onto a
+# settings field by joining the path with underscores, so auth.jwt.issuer is the
+# field auth_jwt_issuer and the environment variable AUTH_JWT_ISSUER. Two
+# spellings that flatten to the same field are an error, as is an unknown key.
+#
+# String values support ${VAR} and ${VAR:-fallback}. Write $${ for a literal ${.
+
+app:
+  name: Games API
+
+# Connection URLs are absent by design: they carry credentials, so they come
+# from .env or the process environment. See .env.example.
+aws:
+  region: ca-central-1
+
+cors:
+  origins: "http://localhost:3040,http://127.0.0.1:3040"
+
+auth:
+  # Lifetimes for the tokens issued at sign-in.
+  access_token_minutes: 15
+  refresh_token_days: 30
+  # How long an emailed sign-in code stays valid.
+  code_minutes: 10
+
+  jwt:
+    # auth.jwt.secret is a secret: supply AUTH_JWT_SECRET instead.
+    issuer: games-api
+    audience: games-api
+
+  refresh_cookie:
+    name: games_refresh
+    path: /auth
+    secure: true
+    samesite: lax
+
+  # Per-client request caps, counted over throttle_window_seconds.
+  availability_limit: 20
+  signup_limit: 10
+  throttle_window_seconds: 60
+
+  # Cuckoo filter that answers "is this email taken?" without hitting Postgres.
+  email_filter:
+    enabled: true
+    capacity: 100000
+    bucket_size: 4
+    expansion: 2
+    max_iterations: 20
+    lock_seconds: 300
+    # Bounds on the warm-up pass that repopulates the filter at startup.
+    rebuild:
+      batch_size: 1000
+      timeout_seconds: 30
+
+smtp:
+  # smtp.username and smtp.password are secrets: supply SMTP_USERNAME and
+  # SMTP_PASSWORD instead.
+  host: ""
+  port: 587
+  from: ""
+  starttls: true
+
+email_worker:
+  concurrency: 10
+
+# OAuth client IDs. These cannot nest under a shared "oauth" key: the flattened
+# name has to stay google_client_id, microsoft_tenant_id, and so on.
+google:
+  client_id: ""
+microsoft:
+  client_id: ""
+  tenant_id: ""
+apple:
+  client_id: ""

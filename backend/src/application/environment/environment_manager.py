@@ -1,11 +1,48 @@
+import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+from src.application.environment.yaml_source import ConfigFileError, YamlSettingsSource
 
 
+_BACKEND_ROOT = Path(__file__).resolve().parents[3]
 _ROOT_ENV_FILE = Path(__file__).resolve().parents[4] / ".env"
+
+AppEnv = Literal["dev", "test", "prod"]
+_APP_ENVS: tuple[AppEnv, ...] = ("dev", "test", "prod")
+
+
+def resolve_app_env() -> AppEnv:
+    """Return the active stage.
+
+    The APP_ENV operating-system variable is the only supported way to switch
+    stages, because the configuration layer has to be chosen before Settings is
+    constructed. Passing ``Settings(app_env=...)`` sets the field but does not
+    change which YAML file was read.
+    """
+    value = os.environ.get("APP_ENV", "dev")
+    if value not in _APP_ENVS:
+        raise ConfigFileError(
+            f"APP_ENV must be one of {', '.join(_APP_ENVS)} (got {value!r})"
+        )
+    return value
+
+
+def config_dir() -> Path:
+    """Directory holding the YAML layers.
+
+    Defaults to ``backend/config``, which resolves to ``/app/config`` inside the
+    container because the image keeps the same ``src`` layout under /app.
+    """
+    override = os.environ.get("BACKEND_CONFIG_DIR")
+    return Path(override) if override else _BACKEND_ROOT / "config"
 
 
 class Settings(BaseSettings):
@@ -15,6 +52,8 @@ class Settings(BaseSettings):
         extra="ignore",
         validate_default=True,
     )
+    # Read from the APP_ENV operating-system variable only; see resolve_app_env.
+    app_env: AppEnv = "dev"
     app_name: str = "Games API"
     database_url: str = "postgresql+asyncpg://games:games@127.0.0.1:5432/games"
     redis_url: str = "redis://127.0.0.1:6379/0"
@@ -23,7 +62,7 @@ class Settings(BaseSettings):
     aws_region: str = "ca-central-1"
     s3_bucket: str | None = None
     cors_origins: str = "http://localhost:3040,http://127.0.0.1:3040"
-    auth_jwt_secret: str
+    auth_jwt_secret: str = ""
     auth_jwt_issuer: str = "games-api"
     auth_jwt_audience: str = "games-api"
     auth_access_token_minutes: int = 15
@@ -56,6 +95,26 @@ class Settings(BaseSettings):
     microsoft_client_id: str = ""
     microsoft_tenant_id: str = ""
     apple_client_id: str = ""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        app_env = resolve_app_env()
+        directory = config_dir()
+        yaml_settings = YamlSettingsSource(
+            settings_cls,
+            (directory / "default.yml", directory / f"{app_env}.yml"),
+        )
+        if app_env == "test":
+            # Skip .env so a developer's root file cannot leak into the suite.
+            return (init_settings, env_settings, yaml_settings)
+        return (init_settings, env_settings, dotenv_settings, yaml_settings)
 
     @field_validator("database_url", "redis_url", "opensearch_url", "rabbitmq_url")
     @classmethod

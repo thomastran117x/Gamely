@@ -1,0 +1,25 @@
+# Automated test overrides, applied on top of default.yml.
+# Selected by APP_ENV=test, which test/conftest.py sets before importing src.
+#
+# When APP_ENV is test the root .env layer is skipped entirely, so a developer's
+# local .env cannot leak into the suite. That makes this file responsible for
+# every value the suite needs but does not pass explicitly.
+#
+# Keep this minimal: change only what hermeticity requires. Tunables must stay
+# at their default.yml values so existing assertions keep holding.
+
+auth:
+  jwt:
+    # Not a real secret: a fixed dummy that only ever signs test tokens.
+    secret: test-secret-with-at-least-thirty-two-characters
+
+# Pinned so a unit test can never reach a real service. Integration tests
+# override these with live Testcontainers URLs via Settings(...) kwargs.
+database:
+  url: postgresql+asyncpg://games:games@127.0.0.1:5432/games
+redis:
+  url: redis://127.0.0.1:6379/0
+opensearch:
+  url: http://127.0.0.1:9200
+rabbitmq:
+  url: amqp://games:games@127.0.0.1:5672/

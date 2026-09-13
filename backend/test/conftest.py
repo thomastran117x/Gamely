@@ -4,9 +4,10 @@ from collections.abc import Generator
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ.setdefault(
-    "AUTH_JWT_SECRET", "test-secret-with-at-least-thirty-two-characters"
-)
+# Must run before the src imports below: Settings picks its configuration layer
+# from APP_ENV at construction time, and importing src.main constructs one.
+# APP_ENV=test also skips the root .env layer, keeping the suite hermetic.
+os.environ["APP_ENV"] = "test"
 
 from src.application.contracts import ApplicationServices
 from src.application.environment.environment_manager import Settings
@@ -35,7 +36,7 @@ class FakeServices(ApplicationServices):
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(auth_jwt_secret="test-secret-with-at-least-thirty-two-characters")
+    return Settings()
 
 
 @pytest.fixture
