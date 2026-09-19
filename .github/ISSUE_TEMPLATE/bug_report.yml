@@ -1,0 +1,65 @@
+name: Bug report
+description: Report reproducible behavior that is incorrect or unexpected.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Search existing issues first. Do not include credentials, personal data, or vulnerability details; use the private process in SECURITY.md for security reports.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Frontend
+        - Backend API
+        - Email worker
+        - Infrastructure or Compose
+        - Documentation
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest reliable sequence of steps, request, or repository revision.
+      placeholder: |
+        1. Start ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the OS, browser if relevant, tool versions, and commit or branch.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Remove tokens, credentials, personal data, and unrelated output.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for an existing report.
+          required: true
+        - label: This report does not contain sensitive vulnerability details.
+          required: true
+        - label: I removed credentials and personal data.
+          required: true

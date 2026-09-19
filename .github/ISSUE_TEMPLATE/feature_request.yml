@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose an improvement by describing the user problem and desired outcome.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests guide discussion but are not delivery commitments. Search existing issues before submitting.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Frontend
+        - Backend API
+        - Email worker
+        - Infrastructure or developer experience
+        - Documentation
+        - Cross-cutting or unknown
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or contributor problem should be solved? Avoid starting with an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the successful behavior and who benefits.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe current workarounds or other approaches, if any.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add mockups, examples, constraints, or related issues. Remove private data.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for an existing request.
+          required: true
+        - label: I described a problem and outcome rather than only an implementation.
+          required: true
