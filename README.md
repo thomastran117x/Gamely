@@ -44,6 +44,9 @@ Prerequisites are Docker with the Compose plugin and Git.
    docker compose up --build
    ```
 
+   Compose runs the committed Alembic migrations in a one-shot `migrate` service after PostgreSQL
+   is healthy. The API starts only after all pending migrations succeed.
+
 4. Open the frontend at <http://localhost:3040> or the API documentation at
    <http://127.0.0.1:8040/docs>.
 

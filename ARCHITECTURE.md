@@ -10,7 +10,9 @@ flowchart LR
     Browser[Browser] --> Frontend[Angular SSR frontend]
     Client[API client] --> API[FastAPI API]
     Frontend -. configured, not yet integrated .-> API
-    API --> Postgres[(PostgreSQL)]
+    Migrate[Alembic migration job] --> Postgres[(PostgreSQL)]
+    Migrate -. gates startup .-> API
+    API --> Postgres
     API --> Redis[(Redis)]
     API --> Search[(OpenSearch)]
     API --> Rabbit[(RabbitMQ)]
@@ -20,7 +22,9 @@ flowchart LR
 ```
 
 Docker Compose runs the frontend, API, email worker, and local infrastructure. AWS S3 and SMTP are
-external integrations. S3 is intentionally not emulated locally.
+external integrations. A one-shot Alembic service applies pending migrations after PostgreSQL is
+healthy and must finish successfully before the API starts. S3 is intentionally not emulated
+locally.
 
 ## Frontend
 
@@ -101,7 +105,9 @@ queues before dead-lettering; invalid, expired, or permanently rejected messages
 ## Data and infrastructure
 
 - **PostgreSQL:** authoritative relational data, accessed asynchronously through SQLAlchemy.
-  Alembic owns schema changes; application startup must not create tables.
+  Alembic owns schema changes; the Compose migration job applies them before API startup, while
+  other environments must run the same migration command as a deployment step. Application startup
+  must not create tables.
 - **Redis:** sessions, verification codes, throttles, and probabilistic email-availability state.
 - **OpenSearch:** connected as a long-lived client and included in readiness; no product search
   feature is exposed yet.

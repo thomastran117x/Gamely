@@ -50,7 +50,8 @@ To run the complete containerized stack from the repository root instead:
 docker compose up --build
 ```
 
-Compose publishes the API at <http://127.0.0.1:8040> by default.
+Compose publishes the API at <http://127.0.0.1:8040> by default. A one-shot `migrate` service runs
+`alembic upgrade head` after PostgreSQL becomes healthy, and the API starts only if it succeeds.
 
 ## Database migrations
 

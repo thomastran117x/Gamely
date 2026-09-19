@@ -12,3 +12,7 @@ authoritative project versions.
 
 - Project, architecture, contribution, support, security, conduct, release, issue, and pull request
   documentation.
+
+### Fixed
+
+- Fresh Docker Compose environments now apply pending database migrations before starting the API.
