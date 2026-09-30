@@ -1,5 +1,16 @@
 # Games Repository Conventions
 
+## Documentation ownership
+
+- `ARCHITECTURE.md` is authoritative for implemented system design and architectural direction.
+- `CONTRIBUTING.md` is authoritative for developer setup, validation, branches, commits, and pull
+  requests.
+- `AGENTS.md` adds execution and handoff rules for coding agents.
+- Component READMEs contain commands and context specific to that component.
+
+Keep these documents consistent when a change affects their subject. Do not duplicate detailed
+workflow rules when a link to the authoritative document is sufficient.
+
 ## Structure
 
 - `frontend/` is the Angular 20 SSR application.
@@ -35,8 +46,20 @@ Keep feature code out of `shared` and infrastructure-specific code out of `appli
 1. Copy root `.env.example` to `.env`; never commit `.env` or real AWS credentials.
 2. Run the full stack with `docker compose up --build` from the repository root.
 3. Defaults: frontend `http://localhost:3040`, backend `http://127.0.0.1:8040`. Container-to-container API traffic uses `http://api:8000`.
-4. Use `cd backend && uv run pytest` for fast tests, `uv run pytest -m integration` only after Compose is running, and `uv run mypy` before handoff.
-5. Use `cd frontend && npm run build` to validate Angular changes.
+4. Use `cd backend && uv run pytest` for fast tests, `uv run pytest -m integration` when Docker is
+   available, and `uv run mypy` before handoff.
+5. For frontend changes, run formatting, type-check, build, and focused tests as described in
+   `CONTRIBUTING.md`.
+6. Validate Compose changes with `docker compose --env-file .env.example config`.
+
+## Pull requests
+
+- Branches use `<type>/<short-kebab-name>`.
+- Pull request titles use `type(optional-scope)!: imperative summary` and are squash-merged.
+- Keep pull requests focused, complete the repository template, disclose risk, and report exact
+  validation results.
+- `CONTRIBUTING.md` defines the complete pull request contract; `AGENTS.md` defines agent handoff and
+  pull request creation behavior.
 
 ## Compose and configuration
 

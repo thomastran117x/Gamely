@@ -1,4 +1,19 @@
 services:
+  migrate:
+    build:
+      context: ./backend
+    command: ["/app/.venv/bin/alembic", "upgrade", "head"]
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://games:games@postgres:5432/games}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build:
       context: ./backend
@@ -19,6 +34,8 @@ services:
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       S3_BUCKET: ${S3_BUCKET:-}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
